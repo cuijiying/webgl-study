@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>03 - 二维平移</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>03 - 二维平移</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>X 平移: <span class="value" id="xVal">200</span>px</label>
+        <input type="range" id="xSlider" min="0" max="580" value="200">
+      </div>
+      <div class="control-group">
+        <label>Y 平移: <span class="value" id="yVal">150</span>px</label>
+        <input type="range" id="ySlider" min="0" max="380" value="150">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>关键：使用 <code>uniform</code> 传递平移量</p>
+        <p><code>uniform</code> 对所有顶点都相同，<code>attribute</code> 对每个顶点不同</p>
+        <p>这里使用<strong>像素坐标</strong>而非裁剪空间坐标，更直观易用</p>
+        <p>投影矩阵负责将像素坐标转换为裁剪空间坐标</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 从像素到裁剪空间</h3>
+    <p>裁剪空间(-1 到 1)不便于人类理解。我们更习惯用像素坐标。</p>
+    <p>解决方案：在顶点着色器中用 <code>u_resolution</code>（画布分辨率）将像素坐标转换为裁剪空间：
+    <code>clipSpace = (pixelPos / resolution) * 2.0 - 1.0</code></p>
+    <p>平移的本质：给每个顶点的位置加上一个偏移量 <code>u_translation</code>。</p>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec2 a_position;
+
+  uniform vec2 u_resolution;   // 画布分辨率
+  uniform vec2 u_translation;  // 平移量（像素）
+
+  void main() {
+    // 先平移：加上偏移量
+    vec2 position = a_position + u_translation;
+
+    // 像素坐标 → 0~1
+    vec2 zeroToOne = position / u_resolution;
+    // 0~1 → 0~2
+    vec2 zeroToTwo = zeroToOne * 2.0;
+    // 0~2 → -1~1 (裁剪空间)
+    vec2 clipSpace = zeroToTwo - 1.0;
+
+    // 翻转Y轴（屏幕坐标Y向下，GL坐标Y向上）
+    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  void main() {
+    gl_FragColor = vec4(0.3, 0.76, 0.97, 1.0);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const resLoc = gl.getUniformLocation(program, 'u_resolution');
+  const transLoc = gl.getUniformLocation(program, 'u_translation');
+
+  // "F" 形状的顶点数据（像素坐标）
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  setGeometry(gl);
+
+  let translation = [200, 150];
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // 设置uniform值
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.uniform2f(transLoc, translation[0], translation[1]);
+
+    // 绘制 "F" 形（6个三角形 = 18个顶点）
+    gl.drawArrays(gl.TRIANGLES, 0, 18);
+  }
+
+  // "F"字母的几何数据（6个矩形 = 6*2 个三角形 = 18 个顶点）
+  function setGeometry(gl) {
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      // 左侧竖条
+      0,   0,    30,  0,    0,  150,
+      0,  150,   30,  0,   30,  150,
+      // 上部横条
+      30,  0,   100,  0,   30,   30,
+      30,  30,  100,  0,  100,   30,
+      // 中间横条
+      30,  60,   70,  60,  30,   90,
+      30,  90,   70,  60,  70,   90,
+    ]), gl.STATIC_DRAW);
+  }
+
+  // 交互
+  document.getElementById('xSlider').addEventListener('input', (e) => {
+    translation[0] = +e.target.value;
+    document.getElementById('xVal').textContent = translation[0];
+    drawScene();
+  });
+  document.getElementById('ySlider').addEventListener('input', (e) => {
+    translation[1] = +e.target.value;
+    document.getElementById('yVal').textContent = translation[1];
+    drawScene();
+  });
+
+  drawScene();
+</script>
+</body>
+</html>

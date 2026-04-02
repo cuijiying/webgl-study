@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGL 学习练习集</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="hero">
+    <h1>🎨 WebGL 学习练习集</h1>
+    <p>基于 <a href="https://webglfundamentals.org/webgl/lessons/zh_cn/" target="_blank" style="color:#4fc3f7;">WebGL Fundamentals</a> 教程，从零开始掌握 WebGL。每个 Demo 都包含详细注释和交互控件。</p>
+  </div>
+
+  <div class="chapters">
+    <!-- 第一章：基础概念 -->
+    <div class="chapter">
+      <h2>一、基础概念</h2>
+      <div class="demo-grid">
+        <a class="demo-card" href="demos/01-hello-triangle/index.html">
+          <span class="num">01</span>
+          <h3>Hello Triangle - 第一个三角形</h3>
+          <p>学习WebGL最基本的渲染流程：创建着色器、编译程序、设置缓冲区、绘制三角形。理解顶点着色器和片元着色器的基本工作。</p>
+        </a>
+        <a class="demo-card" href="demos/02-how-it-works/index.html">
+          <span class="num">02</span>
+          <h3>工作原理 - 多色三角形</h3>
+          <p>理解WebGL的渲染管线：顶点着色器如何传递数据给片元着色器，varying变量的插值原理，以及GPU如何为每个像素执行片元着色器。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第二章：2D变换 -->
+    <div class="chapter">
+      <h2>二、二维平移、旋转、缩放和矩阵运算</h2>
+      <div class="demo-grid">
+        <a class="demo-card" href="demos/03-2d-translation/index.html">
+          <span class="num">03</span>
+          <h3>二维平移</h3>
+          <p>通过滑块交互控制图形在2D空间中移动。理解如何在着色器中添加偏移量来实现平移效果。</p>
+        </a>
+        <a class="demo-card" href="demos/04-2d-rotation/index.html">
+          <span class="num">04</span>
+          <h3>二维旋转</h3>
+          <p>理解三角函数(sin/cos)在旋转中的核心作用。通过滑块控制旋转角度，直观看到旋转效果。</p>
+        </a>
+        <a class="demo-card" href="demos/05-2d-scale/index.html">
+          <span class="num">05</span>
+          <h3>二维缩放</h3>
+          <p>学习如何通过乘法运算对图形进行缩放。支持X/Y轴独立缩放和镜像翻转。</p>
+        </a>
+        <a class="demo-card" href="demos/06-2d-matrices/index.html">
+          <span class="num">06</span>
+          <h3>二维矩阵变换</h3>
+          <p>将平移、旋转、缩放统一为矩阵运算。理解矩阵乘法顺序的重要性（先缩放→再旋转→后平移）。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第三章：3D -->
+    <div class="chapter">
+      <h2>三、三维空间</h2>
+      <div class="demo-grid">
+        <a class="demo-card" href="demos/07-3d-orthographic/index.html">
+          <span class="num">07</span>
+          <h3>三维正射投影</h3>
+          <p>从2D过渡到3D！绘制一个3D的"F"字母，理解正交投影矩阵和深度缓冲(Z-Buffer)的工作原理。</p>
+        </a>
+        <a class="demo-card" href="demos/08-3d-perspective/index.html">
+          <span class="num">08</span>
+          <h3>三维透视投影</h3>
+          <p>实现近大远小的真实透视效果。理解视野角(FOV)、宽高比(Aspect Ratio)、近裁面/远裁面的含义。</p>
+        </a>
+        <a class="demo-card" href="demos/09-3d-camera/index.html">
+          <span class="num">09</span>
+          <h3>三维相机</h3>
+          <p>实现可交互的3D相机系统。学习lookAt矩阵的构建原理，让相机围绕目标旋转观察。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第四章：光照 -->
+    <div class="chapter">
+      <h2>四、光照</h2>
+      <div class="demo-grid">
+        <a class="demo-card" href="demos/10-directional-light/index.html">
+          <span class="num">10</span>
+          <h3>方向光源</h3>
+          <p>学习最基本的光照模型。理解法线(Normal)、点积(Dot Product)在光照计算中的作用，实现方向光（类似太阳光）。</p>
+        </a>
+        <a class="demo-card" href="demos/11-point-light/index.html">
+          <span class="num">11</span>
+          <h3>点光源</h3>
+          <p>实现从一个点向四周发射的点光源。学习高光反射(Specular)计算，让物体表面有光泽感。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第五章：纹理 -->
+    <div class="chapter">
+      <h2>五、纹理</h2>
+      <div class="demo-grid">
+        <a class="demo-card" href="demos/12-textures/index.html">
+          <span class="num">12</span>
+          <h3>纹理贴图</h3>
+          <p>学习纹理坐标(UV)、纹理对象的创建、图片加载与绑定。将图片贴到3D物体表面。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第六章：组织和实践 -->
+    <div class="chapter">
+      <h2>六、组织和实践</h2>
+      <div class="demo-grid">
+        <a class="demo-card" href="demos/13-multiple-objects/index.html">
+          <span class="num">13</span>
+          <h3>绘制多个物体</h3>
+          <p>学习如何在一个场景中渲染多个不同的物体，理解状态管理和draw call的组织方式。</p>
+        </a>
+        <a class="demo-card" href="demos/14-animation/index.html">
+          <span class="num">14</span>
+          <h3>动画</h3>
+          <p>使用requestAnimationFrame实现流畅动画。学习时间管理、deltaTime的计算与应用。</p>
+        </a>
+        <a class="demo-card" href="demos/15-image-processing/index.html">
+          <span class="num">15</span>
+          <h3>图像处理</h3>
+          <p>利用WebGL的GPU并行计算能力处理图像。实现模糊、边缘检测、锐化等卷积核效果。</p>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <footer style="text-align:center; padding:40px; color:#546e7a; font-size:0.85rem;">
+    参考教程：<a href="https://webglfundamentals.org/webgl/lessons/zh_cn/" target="_blank" style="color:#4fc3f7;">WebGL Fundamentals (中文)</a>
+  </footer>
+</body>
+</html>

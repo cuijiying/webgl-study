@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>09 - 三维相机</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>09 - 三维相机（lookAt）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>相机角度: <span class="value" id="camAngleVal">0</span>°</label>
+        <input type="range" id="camAngleSlider" min="0" max="360" value="0">
+      </div>
+      <div class="control-group">
+        <label>相机距离: <span class="value" id="camDistVal">300</span></label>
+        <input type="range" id="camDistSlider" min="100" max="600" value="300">
+      </div>
+      <div class="control-group">
+        <label>相机高度: <span class="value" id="camHeightVal">100</span></label>
+        <input type="range" id="camHeightSlider" min="-200" max="300" value="100">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 相机原理</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>lookAt矩阵</strong>：给定相机位置、目标点、上方向，构建相机坐标系</p>
+        <p>视图矩阵 = lookAt矩阵的<strong>逆矩阵</strong></p>
+        <p>原因：移动相机等于反方向移动整个世界</p>
+        <p style="color:#ffab40;">最终矩阵 = 投影 × 视图 × 模型</p>
+        <p>场景中绘制多个"F"围成一圈，相机绕圈观察</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec4 a_color;
+  uniform mat4 u_matrix;
+  varying vec4 v_color;
+  void main() {
+    gl_Position = u_matrix * a_position;
+    v_color = a_color;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec4 v_color;
+  void main() {
+    gl_FragColor = v_color;
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const colorLoc = gl.getAttribLocation(program, 'a_color');
+  const matLoc = gl.getUniformLocation(program, 'u_matrix');
+
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  setFGeometry(gl);
+  const colorBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+  setFColors(gl);
+
+  const numFs = 8; // 8个F围成一圈
+  let camAngle = 0, camDist = 300, camHeight = 100;
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(colorLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+    gl.vertexAttribPointer(colorLoc, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+
+    const aspect = canvas.width / canvas.height;
+    const projMatrix = M4.perspective(60 * Math.PI / 180, aspect, 1, 2000);
+
+    // 构建相机矩阵
+    const camRad = camAngle * Math.PI / 180;
+    const cameraPosition = [
+      Math.sin(camRad) * camDist,
+      camHeight,
+      Math.cos(camRad) * camDist,
+    ];
+    const target = [0, 50, 0]; // 看向原点附近
+    const up = [0, 1, 0];
+
+    // lookAt 构建相机矩阵，再求逆得到视图矩阵
+    const cameraMatrix = M4.lookAt(cameraPosition, target, up);
+    const viewMatrix = M4.inverse(cameraMatrix);
+    const viewProjectionMatrix = M4.multiply(projMatrix, viewMatrix);
+
+    // 绘制多个F围成一圈
+    const radius = 150;
+    for (let i = 0; i < numFs; i++) {
+      const angle = (i * Math.PI * 2) / numFs;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+
+      let matrix = M4.translate(viewProjectionMatrix, x, 0, z);
+      matrix = M4.yRotate(matrix, -angle); // 让F面朝外
+      matrix = M4.translate(matrix, -50, -75, 0);
+
+      gl.uniformMatrix4fv(matLoc, false, matrix);
+      gl.drawArrays(gl.TRIANGLES, 0, 16 * 6);
+    }
+  }
+
+  function setFGeometry(gl) {
+    const d = 30;
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      0,0,0, 30,0,0, 0,150,0,  0,150,0, 30,0,0, 30,150,0,
+      30,0,0, 100,0,0, 30,30,0,  30,30,0, 100,0,0, 100,30,0,
+      30,60,0, 70,60,0, 30,90,0,  30,90,0, 70,60,0, 70,90,0,
+      0,0,d, 0,150,d, 30,0,d,  0,150,d, 30,150,d, 30,0,d,
+      30,0,d, 30,30,d, 100,0,d,  30,30,d, 100,30,d, 100,0,d,
+      30,60,d, 30,90,d, 70,60,d,  30,90,d, 70,90,d, 70,60,d,
+      0,0,0, 0,0,d, 100,0,0,  0,0,d, 100,0,d, 100,0,0,
+      100,0,0, 100,0,d, 100,30,0,  100,0,d, 100,30,d, 100,30,0,
+      30,30,0, 30,30,d, 100,30,0,  30,30,d, 100,30,d, 100,30,0,
+      30,30,0, 30,60,0, 30,30,d,  30,30,d, 30,60,0, 30,60,d,
+      30,60,0, 30,60,d, 70,60,0,  30,60,d, 70,60,d, 70,60,0,
+      70,60,0, 70,60,d, 70,90,0,  70,60,d, 70,90,d, 70,90,0,
+      30,90,0, 70,90,0, 30,90,d,  30,90,d, 70,90,0, 70,90,d,
+      30,90,0, 30,90,d, 30,150,0,  30,90,d, 30,150,d, 30,150,0,
+      0,150,0, 30,150,0, 0,150,d,  0,150,d, 30,150,0, 30,150,d,
+      0,0,0, 0,150,0, 0,0,d,  0,0,d, 0,150,0, 0,150,d,
+    ]), gl.STATIC_DRAW);
+  }
+
+  function setFColors(gl) {
+    const fc = [
+      [200,70,120],[80,70,200],[70,200,210],[200,70,120],[80,70,200],[70,200,210],
+      [200,200,70],[210,100,70],[210,160,70],[70,180,210],[100,70,210],[76,210,100],
+      [140,210,80],[90,130,110],[160,160,220],[255,128,64]
+    ];
+    const colors = [];
+    for (let f = 0; f < 16; f++) { const c = fc[f]; for (let v = 0; v < 6; v++) colors.push(...c); }
+    gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(colors), gl.STATIC_DRAW);
+  }
+
+  function bind(id, valId, fn) {
+    document.getElementById(id).addEventListener('input', (e) => {
+      fn(+e.target.value); document.getElementById(valId).textContent = +e.target.value; drawScene();
+    });
+  }
+  bind('camAngleSlider', 'camAngleVal', (v) => camAngle = v);
+  bind('camDistSlider', 'camDistVal', (v) => camDist = v);
+  bind('camHeightSlider', 'camHeightVal', (v) => camHeight = v);
+
+  drawScene();
+</script>
+</body>
+</html>

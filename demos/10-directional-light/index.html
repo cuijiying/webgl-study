@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>10 - 方向光源</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>10 - 方向光源（Directional Light）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>光照方向 X: <span class="value" id="lxVal">0.5</span></label>
+        <input type="range" id="lxSlider" min="-100" max="100" value="50">
+      </div>
+      <div class="control-group">
+        <label>光照方向 Y: <span class="value" id="lyVal">0.7</span></label>
+        <input type="range" id="lySlider" min="-100" max="100" value="70">
+      </div>
+      <div class="control-group">
+        <label>光照方向 Z: <span class="value" id="lzVal">1.0</span></label>
+        <input type="range" id="lzSlider" min="-100" max="100" value="100">
+      </div>
+      <div class="control-group">
+        <label>Y 旋转: <span class="value" id="ryVal">30</span>°</label>
+        <input type="range" id="rySlider" min="0" max="360" value="30">
+      </div>
+      <div class="control-group">
+        <label>X 旋转: <span class="value" id="rxVal">20</span>°</label>
+        <input type="range" id="rxSlider" min="0" max="360" value="20">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 光照数学</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>法线(Normal)</strong>: 表面朝向，垂直于表面的单位向量</p>
+        <p><strong>点积(Dot Product)</strong>: <code>dot(normal, lightDir)</code></p>
+        <p>点积结果 = cos(夹角)，面对光源=1(亮)，背对=-1(暗)</p>
+        <p><code>brightness = max(dot(N, L), 0)</code></p>
+        <p style="color:#ffab40;">法线需要用世界矩阵的逆转置矩阵变换！</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec3 a_normal;   // 法线
+
+  uniform mat4 u_worldViewProjection;
+  uniform mat4 u_world;  // 世界矩阵，用于变换法线
+
+  varying vec3 v_normal;
+
+  void main() {
+    gl_Position = u_worldViewProjection * a_position;
+    // 法线需要用世界矩阵变换（此处简化，忽略非等比缩放）
+    v_normal = mat3(u_world) * a_normal;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec3 v_normal;
+  uniform vec3 u_reverseLightDirection;  // 反向光照方向（指向光源）
+  uniform vec3 u_color;
+
+  void main() {
+    // 归一化法线（插值后可能不是单位向量）
+    vec3 normal = normalize(v_normal);
+    // 计算光照强度：法线与光照方向的点积
+    float light = max(dot(normal, u_reverseLightDirection), 0.0);
+    gl_FragColor = vec4(u_color * light, 1.0);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const normalLoc = gl.getAttribLocation(program, 'a_normal');
+  const wvpLoc = gl.getUniformLocation(program, 'u_worldViewProjection');
+  const worldLoc = gl.getUniformLocation(program, 'u_world');
+  const lightDirLoc = gl.getUniformLocation(program, 'u_reverseLightDirection');
+  const colorLoc = gl.getUniformLocation(program, 'u_color');
+
+  // 创建立方体
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  setCubeGeometry(gl);
+
+  const normalBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+  setCubeNormals(gl);
+
+  let lightDir = [0.5, 0.7, 1.0];
+  let ry = 30, rx = 20;
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(normalLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+    gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+
+    const aspect = canvas.width / canvas.height;
+    const projMatrix = M4.perspective(60 * Math.PI / 180, aspect, 1, 2000);
+    const viewMatrix = M4.inverse(M4.lookAt([0, 0, 300], [0, 0, 0], [0, 1, 0]));
+    const viewProjMatrix = M4.multiply(projMatrix, viewMatrix);
+
+    let worldMatrix = M4.yRotation(ry * Math.PI / 180);
+    worldMatrix = M4.xRotate(worldMatrix, rx * Math.PI / 180);
+
+    const wvp = M4.multiply(viewProjMatrix, worldMatrix);
+
+    gl.uniformMatrix4fv(wvpLoc, false, wvp);
+    gl.uniformMatrix4fv(worldLoc, false, worldMatrix);
+
+    // 归一化光照方向
+    const len = Math.sqrt(lightDir[0]**2 + lightDir[1]**2 + lightDir[2]**2);
+    gl.uniform3f(lightDirLoc, lightDir[0]/len, lightDir[1]/len, lightDir[2]/len);
+    gl.uniform3f(colorLoc, 0.3, 0.76, 0.97);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+  }
+
+  // 立方体顶点 (100x100x100, 居中)
+  function setCubeGeometry(gl) {
+    const s = 80;
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      // 前面
+      -s,-s, s,  s,-s, s,  -s, s, s,  -s, s, s,  s,-s, s,  s, s, s,
+      // 后面
+      -s,-s,-s,  -s, s,-s,  s,-s,-s,  s,-s,-s,  -s, s,-s,  s, s,-s,
+      // 上面
+      -s, s,-s,  -s, s, s,  s, s,-s,  s, s,-s,  -s, s, s,  s, s, s,
+      // 下面
+      -s,-s,-s,  s,-s,-s,  -s,-s, s,  -s,-s, s,  s,-s,-s,  s,-s, s,
+      // 右面
+       s,-s,-s,  s, s,-s,  s,-s, s,  s,-s, s,  s, s,-s,  s, s, s,
+      // 左面
+      -s,-s,-s,  -s,-s, s,  -s, s,-s,  -s, s,-s,  -s,-s, s,  -s, s, s,
+    ]), gl.STATIC_DRAW);
+  }
+
+  // 立方体法线
+  function setCubeNormals(gl) {
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      // 前
+      0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1,
+      // 后
+      0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+      // 上
+      0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0,
+      // 下
+      0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0,
+      // 右
+      1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0,
+      // 左
+      -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0,
+    ]), gl.STATIC_DRAW);
+  }
+
+  function bind(id, valId, fn) {
+    document.getElementById(id).addEventListener('input', (e) => {
+      fn(+e.target.value); document.getElementById(valId).textContent = (+e.target.value / 100).toFixed(1); drawScene();
+    });
+  }
+  bind('lxSlider', 'lxVal', (v) => lightDir[0] = v / 100);
+  bind('lySlider', 'lyVal', (v) => lightDir[1] = v / 100);
+  bind('lzSlider', 'lzVal', (v) => lightDir[2] = v / 100);
+
+  document.getElementById('rySlider').addEventListener('input', (e) => {
+    ry = +e.target.value; document.getElementById('ryVal').textContent = ry; drawScene();
+  });
+  document.getElementById('rxSlider').addEventListener('input', (e) => {
+    rx = +e.target.value; document.getElementById('rxVal').textContent = rx; drawScene();
+  });
+
+  drawScene();
+</script>
+</body>
+</html>

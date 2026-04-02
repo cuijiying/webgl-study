@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>14 - 动画</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>14 - 动画（requestAnimationFrame）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>旋转速度: <span class="value" id="speedVal">1.0</span>x</label>
+        <input type="range" id="speedSlider" min="0" max="300" value="100">
+      </div>
+      <div class="control-group">
+        <label>立方体数量: <span class="value" id="countVal">5</span></label>
+        <input type="range" id="countSlider" min="1" max="15" value="5" step="1">
+      </div>
+      <div class="control-group">
+        <button id="pauseBtn" style="width:100%; padding:8px; background:#4fc3f7; border:none; border-radius:4px; color:#000; cursor:pointer; font-size:14px;">⏸ 暂停 / ▶ 继续</button>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 动画原理</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>requestAnimationFrame</strong>: 浏览器每帧回调（通常60fps）</p>
+        <p><strong>deltaTime</strong>: 上一帧到这一帧的时间差</p>
+        <p>动画 = 每帧更新状态 + 重新渲染</p>
+        <p style="color:#ffab40;">用 deltaTime × speed 控制运动，确保不同帧率下效果一致！</p>
+        <p>示例：<code>angle += rotationSpeed * deltaTime</code></p>
+        <p>FPS: <span id="fpsVal" style="color:#4fc3f7;">--</span></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec3 a_normal;
+  uniform mat4 u_worldViewProjection;
+  uniform mat4 u_world;
+  varying vec3 v_normal;
+  void main() {
+    gl_Position = u_worldViewProjection * a_position;
+    v_normal = mat3(u_world) * a_normal;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec3 v_normal;
+  uniform vec3 u_lightDir;
+  uniform vec4 u_color;
+  void main() {
+    vec3 normal = normalize(v_normal);
+    float light = max(dot(normal, u_lightDir), 0.0);
+    gl_FragColor = vec4(u_color.rgb * (light * 0.7 + 0.3), u_color.a);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const normalLoc = gl.getAttribLocation(program, 'a_normal');
+  const wvpLoc = gl.getUniformLocation(program, 'u_worldViewProjection');
+  const worldLoc = gl.getUniformLocation(program, 'u_world');
+  const lightDirLoc = gl.getUniformLocation(program, 'u_lightDir');
+  const colorLoc = gl.getUniformLocation(program, 'u_color');
+
+  const s = 35;
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -s,-s,s, s,-s,s, -s,s,s, -s,s,s, s,-s,s, s,s,s,
+    -s,-s,-s, -s,s,-s, s,-s,-s, s,-s,-s, -s,s,-s, s,s,-s,
+    -s,s,-s, -s,s,s, s,s,-s, s,s,-s, -s,s,s, s,s,s,
+    -s,-s,-s, s,-s,-s, -s,-s,s, -s,-s,s, s,-s,-s, s,-s,s,
+    s,-s,-s, s,s,-s, s,-s,s, s,-s,s, s,s,-s, s,s,s,
+    -s,-s,-s, -s,-s,s, -s,s,-s, -s,s,-s, -s,-s,s, -s,s,s,
+  ]), gl.STATIC_DRAW);
+
+  const normalBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1,
+    0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+    0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0,
+    0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0,
+    1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0,
+    -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0,
+  ]), gl.STATIC_DRAW);
+
+  const cubeColors = [
+    [1.0, 0.4, 0.4, 1], [0.4, 1.0, 0.4, 1], [0.4, 0.4, 1.0, 1],
+    [1.0, 1.0, 0.3, 1], [1.0, 0.3, 1.0, 1], [0.3, 1.0, 1.0, 1],
+    [1.0, 0.6, 0.2, 1], [0.7, 0.3, 0.9, 1], [0.2, 0.8, 0.6, 1],
+    [0.9, 0.5, 0.3, 1], [0.3, 0.9, 0.5, 1], [0.5, 0.3, 0.9, 1],
+    [0.8, 0.8, 0.3, 1], [0.3, 0.8, 0.8, 1], [0.8, 0.3, 0.8, 1],
+  ];
+
+  let speed = 1.0;
+  let cubeCount = 5;
+  let paused = false;
+  let then = 0;
+  let globalAngle = 0;
+  let frameCount = 0;
+  let fpsTime = 0;
+
+  function render(now) {
+    now *= 0.001; // 毫秒 → 秒
+    const deltaTime = now - then;
+    then = now;
+
+    // FPS 计算
+    frameCount++;
+    fpsTime += deltaTime;
+    if (fpsTime >= 1.0) {
+      document.getElementById('fpsVal').textContent = Math.round(frameCount / fpsTime);
+      frameCount = 0;
+      fpsTime = 0;
+    }
+
+    if (!paused) {
+      globalAngle += deltaTime * speed;
+    }
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(normalLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+    gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+
+    const aspect = canvas.width / canvas.height;
+    const projMatrix = M4.perspective(60 * Math.PI / 180, aspect, 1, 2000);
+    const viewMatrix = M4.inverse(M4.lookAt([0, 100, 350], [0, 0, 0], [0, 1, 0]));
+    const viewProjMatrix = M4.multiply(projMatrix, viewMatrix);
+
+    const lightDir = M4.normalize([0.5, 0.7, 1]);
+    gl.uniform3fv(lightDirLoc, lightDir);
+
+    const radius = 100;
+    for (let i = 0; i < cubeCount; i++) {
+      const angle = (i / cubeCount) * Math.PI * 2 + globalAngle;
+
+      // 公转
+      let world = M4.translation(
+        Math.cos(angle) * radius,
+        Math.sin(globalAngle * 2 + i) * 30, // 上下浮动
+        Math.sin(angle) * radius
+      );
+      // 自转（不同速度和轴）
+      world = M4.yRotate(world, globalAngle * (1 + i * 0.3));
+      world = M4.xRotate(world, globalAngle * 0.5);
+
+      const wvp = M4.multiply(viewProjMatrix, world);
+      gl.uniformMatrix4fv(wvpLoc, false, wvp);
+      gl.uniformMatrix4fv(worldLoc, false, world);
+      gl.uniform4fv(colorLoc, cubeColors[i % cubeColors.length]);
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+    }
+
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  document.getElementById('speedSlider').addEventListener('input', (e) => {
+    speed = +e.target.value / 100;
+    document.getElementById('speedVal').textContent = speed.toFixed(1);
+  });
+  document.getElementById('countSlider').addEventListener('input', (e) => {
+    cubeCount = +e.target.value;
+    document.getElementById('countVal').textContent = cubeCount;
+  });
+  document.getElementById('pauseBtn').addEventListener('click', () => {
+    paused = !paused;
+  });
+</script>
+</body>
+</html>

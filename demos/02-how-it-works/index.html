@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>02 - 工作原理：多色三角形</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>02 - 工作原理：Varying 插值与多色三角形</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>💡 核心知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>1. <code>attribute</code>: 逐顶点输入数据</p>
+        <p>2. <code>varying</code>: 从顶点着色器传递给片元着色器的变量</p>
+        <p>3. <strong>插值(Interpolation)</strong>: GPU在光栅化时自动对varying值进行线性插值</p>
+        <hr style="border-color:#2a2a4a; margin:12px 0;">
+        <p style="color:#ffab40;">三角形三个顶点分别是红、绿、蓝，中间的颜色是GPU自动插值出来的！</p>
+        <hr style="border-color:#2a2a4a; margin:12px 0;">
+        <p>4. 多个 attribute 可以指向不同的缓冲区</p>
+        <p>5. 顶点着色器运行3次(3个顶点)，片元着色器运行成千上万次(每个像素)</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 Varying 插值原理</h3>
+    <p>顶点着色器为每个顶点输出一个 <code>varying</code> 值。当GPU光栅化三角形时（确定哪些像素在三角形内部），
+    它会根据像素距三个顶点的距离，自动对 varying 值做<strong>线性插值</strong>。</p>
+    <p>例如：顶点A颜色为红色(1,0,0)，顶点B颜色为绿色(0,1,0)，三角形中间某像素距A和B各一半，
+    则该像素收到的颜色为 (0.5, 0.5, 0) —— 黄色。这就是彩色三角形的原理！</p>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec2 a_position;
+  attribute vec3 a_color;    // 新增：逐顶点颜色
+
+  varying vec3 v_color;      // 传递给片元着色器的颜色（会被插值）
+
+  void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_color = a_color;       // 将顶点颜色传递出去
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec3 v_color;      // 接收插值后的颜色
+
+  void main() {
+    gl_FragColor = vec4(v_color, 1.0);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+
+  const program = WebGLUtils.createProgramFromSources(
+    gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  // 获取两个 attribute 的位置
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const colorLoc = gl.getAttribLocation(program, 'a_color');
+
+  // ====== 位置缓冲区 ======
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0.0,  0.7,   // 顶部
+   -0.7, -0.7,   // 左下
+    0.7, -0.7,   // 右下
+  ]), gl.STATIC_DRAW);
+
+  // ====== 颜色缓冲区（独立的缓冲区） ======
+  const colorBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    1.0, 0.0, 0.0,   // 红色（顶部顶点）
+    0.0, 1.0, 0.0,   // 绿色（左下顶点）
+    0.0, 0.0, 1.0,   // 蓝色（右下顶点）
+  ]), gl.STATIC_DRAW);
+
+  // ====== 渲染 ======
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.04, 0.04, 0.1, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  gl.useProgram(program);
+
+  // 设置位置 attribute
+  gl.enableVertexAttribArray(posLoc);
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  // 设置颜色 attribute（使用不同的缓冲区）
+  gl.enableVertexAttribArray(colorLoc);
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+  gl.vertexAttribPointer(colorLoc, 3, gl.FLOAT, false, 0, 0);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+</script>
+</body>
+</html>

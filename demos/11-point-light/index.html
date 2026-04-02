@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>11 - 点光源</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>11 - 点光源 + 高光反射（Specular）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>光源位置 X: <span class="value" id="lpxVal">100</span></label>
+        <input type="range" id="lpxSlider" min="-300" max="300" value="100">
+      </div>
+      <div class="control-group">
+        <label>光源位置 Y: <span class="value" id="lpyVal">100</span></label>
+        <input type="range" id="lpySlider" min="-300" max="300" value="100">
+      </div>
+      <div class="control-group">
+        <label>光源位置 Z: <span class="value" id="lpzVal">150</span></label>
+        <input type="range" id="lpzSlider" min="-300" max="300" value="150">
+      </div>
+      <div class="control-group">
+        <label>高光强度: <span class="value" id="shineVal">30</span></label>
+        <input type="range" id="shineSlider" min="1" max="200" value="30">
+      </div>
+      <div class="control-group">
+        <label>Y 旋转: <span class="value" id="ryVal">30</span>°</label>
+        <input type="range" id="rySlider" min="0" max="360" value="30">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 点光源 vs 方向光</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>方向光</strong>：所有位置光线方向相同（太阳光）</p>
+        <p><strong>点光源</strong>：光从一个点发出，每个表面点的光线方向不同</p>
+        <p><strong>漫反射(Diffuse)</strong>: <code>dot(N, L)</code></p>
+        <p><strong>高光(Specular)</strong>: <code>pow(dot(R, V), shininess)</code></p>
+        <p>R = 反射向量, V = 视线方向</p>
+        <p style="color:#ffab40;">这里用半程向量优化: <code>H = normalize(L + V)</code></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec3 a_normal;
+
+  uniform mat4 u_worldViewProjection;
+  uniform mat4 u_world;
+
+  varying vec3 v_normal;
+  varying vec3 v_worldPosition; // 世界空间中的位置，用于计算光线方向
+
+  void main() {
+    gl_Position = u_worldViewProjection * a_position;
+    v_normal = mat3(u_world) * a_normal;
+    // 计算世界空间位置
+    v_worldPosition = (u_world * a_position).xyz;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+
+  varying vec3 v_normal;
+  varying vec3 v_worldPosition;
+
+  uniform vec3 u_lightPosition;     // 点光源位置（世界空间）
+  uniform vec3 u_viewWorldPosition; // 相机位置（世界空间）
+  uniform float u_shininess;        // 高光指数
+  uniform vec3 u_color;
+
+  void main() {
+    vec3 normal = normalize(v_normal);
+
+    // 计算表面到光源的方向
+    vec3 surfaceToLight = normalize(u_lightPosition - v_worldPosition);
+    // 计算表面到相机的方向
+    vec3 surfaceToView = normalize(u_viewWorldPosition - v_worldPosition);
+    // 半程向量（Blinn-Phong模型）
+    vec3 halfVector = normalize(surfaceToLight + surfaceToView);
+
+    // 漫反射
+    float diffuse = max(dot(normal, surfaceToLight), 0.0);
+    // 高光反射
+    float specular = 0.0;
+    if (diffuse > 0.0) {
+      specular = pow(max(dot(normal, halfVector), 0.0), u_shininess);
+    }
+
+    // 环境光(0.1) + 漫反射 + 高光
+    vec3 ambient = u_color * 0.1;
+    gl_FragColor = vec4(ambient + u_color * diffuse + vec3(1.0) * specular, 1.0);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const normalLoc = gl.getAttribLocation(program, 'a_normal');
+  const wvpLoc = gl.getUniformLocation(program, 'u_worldViewProjection');
+  const worldLoc = gl.getUniformLocation(program, 'u_world');
+  const lightPosLoc = gl.getUniformLocation(program, 'u_lightPosition');
+  const viewPosLoc = gl.getUniformLocation(program, 'u_viewWorldPosition');
+  const shineLoc = gl.getUniformLocation(program, 'u_shininess');
+  const colorLoc = gl.getUniformLocation(program, 'u_color');
+
+  // 球体几何
+  const { positions, normals, numVertices } = createSphere(70, 32, 24);
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+  const normalBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.STATIC_DRAW);
+
+  let lightPos = [100, 100, 150];
+  let shininess = 30;
+  let ry = 30;
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(normalLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+    gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+
+    const camPos = [0, 0, 250];
+    const aspect = canvas.width / canvas.height;
+    const projMatrix = M4.perspective(60 * Math.PI / 180, aspect, 1, 2000);
+    const viewMatrix = M4.inverse(M4.lookAt(camPos, [0, 0, 0], [0, 1, 0]));
+    const viewProjMatrix = M4.multiply(projMatrix, viewMatrix);
+
+    const worldMatrix = M4.yRotation(ry * Math.PI / 180);
+    const wvp = M4.multiply(viewProjMatrix, worldMatrix);
+
+    gl.uniformMatrix4fv(wvpLoc, false, wvp);
+    gl.uniformMatrix4fv(worldLoc, false, worldMatrix);
+    gl.uniform3fv(lightPosLoc, lightPos);
+    gl.uniform3fv(viewPosLoc, camPos);
+    gl.uniform1f(shineLoc, shininess);
+    gl.uniform3f(colorLoc, 0.3, 0.76, 0.97);
+
+    gl.drawArrays(gl.TRIANGLES, 0, numVertices);
+  }
+
+  // 生成球体
+  function createSphere(radius, widthSegments, heightSegments) {
+    const positions = [], normals = [];
+    for (let y = 0; y < heightSegments; y++) {
+      for (let x = 0; x < widthSegments; x++) {
+        const u1 = x / widthSegments, u2 = (x + 1) / widthSegments;
+        const v1 = y / heightSegments, v2 = (y + 1) / heightSegments;
+
+        const p = (u, v) => {
+          const theta = u * Math.PI * 2;
+          const phi = v * Math.PI;
+          const nx = Math.sin(phi) * Math.cos(theta);
+          const ny = Math.cos(phi);
+          const nz = Math.sin(phi) * Math.sin(theta);
+          return { pos: [nx * radius, ny * radius, nz * radius], norm: [nx, ny, nz] };
+        };
+        const a = p(u1, v1), b = p(u2, v1), c = p(u1, v2), d = p(u2, v2);
+        positions.push(...a.pos, ...b.pos, ...c.pos, ...c.pos, ...b.pos, ...d.pos);
+        normals.push(...a.norm, ...b.norm, ...c.norm, ...c.norm, ...b.norm, ...d.norm);
+      }
+    }
+    return { positions, normals, numVertices: positions.length / 3 };
+  }
+
+  document.getElementById('lpxSlider').addEventListener('input', (e) => { lightPos[0] = +e.target.value; document.getElementById('lpxVal').textContent = lightPos[0]; drawScene(); });
+  document.getElementById('lpySlider').addEventListener('input', (e) => { lightPos[1] = +e.target.value; document.getElementById('lpyVal').textContent = lightPos[1]; drawScene(); });
+  document.getElementById('lpzSlider').addEventListener('input', (e) => { lightPos[2] = +e.target.value; document.getElementById('lpzVal').textContent = lightPos[2]; drawScene(); });
+  document.getElementById('shineSlider').addEventListener('input', (e) => { shininess = +e.target.value; document.getElementById('shineVal').textContent = shininess; drawScene(); });
+  document.getElementById('rySlider').addEventListener('input', (e) => { ry = +e.target.value; document.getElementById('ryVal').textContent = ry; drawScene(); });
+
+  drawScene();
+</script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>07 - 三维正射投影</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>07 - 三维正射投影 (3D "F")</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>X 旋转: <span class="value" id="rxVal">30</span>°</label>
+        <input type="range" id="rxSlider" min="0" max="360" value="30">
+      </div>
+      <div class="control-group">
+        <label>Y 旋转: <span class="value" id="ryVal">30</span>°</label>
+        <input type="range" id="rySlider" min="0" max="360" value="30">
+      </div>
+      <div class="control-group">
+        <label>Z 旋转: <span class="value" id="rzVal">0</span>°</label>
+        <input type="range" id="rzSlider" min="0" max="360" value="0">
+      </div>
+      <div class="control-group">
+        <label>X 平移: <span class="value" id="txVal">150</span></label>
+        <input type="range" id="txSlider" min="0" max="600" value="150">
+      </div>
+      <div class="control-group">
+        <label>Y 平移: <span class="value" id="tyVal">100</span></label>
+        <input type="range" id="tySlider" min="0" max="400" value="100">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>3D = 2D + Z轴</p>
+        <p>正交投影：远处和近处一样大（无透视效果）</p>
+        <p><code>gl.enable(gl.DEPTH_TEST)</code> 启用深度测试，确保近处物体遮挡远处的</p>
+        <p>每个面用不同颜色，方便观察3D效果</p>
+        <p style="color:#ffab40;">4×4矩阵处理3D变换（齐次坐标）</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec4 a_color;
+  uniform mat4 u_matrix;
+  varying vec4 v_color;
+
+  void main() {
+    gl_Position = u_matrix * a_position;
+    v_color = a_color;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec4 v_color;
+  void main() {
+    gl_FragColor = v_color;
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const colorLoc = gl.getAttribLocation(program, 'a_color');
+  const matLoc = gl.getUniformLocation(program, 'u_matrix');
+
+  // 创建3D "F" 的几何体
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  setGeometry(gl);
+
+  const colorBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+  setColors(gl);
+
+  let rotation = [30, 30, 0];
+  let translation = [150, 100, 0];
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    // 开启深度测试！这是3D渲染的关键
+    gl.enable(gl.DEPTH_TEST);
+    gl.useProgram(program);
+
+    // 位置属性
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    // 颜色属性
+    gl.enableVertexAttribArray(colorLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+    gl.vertexAttribPointer(colorLoc, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+
+    // 构建正交投影矩阵
+    let matrix = M4.orthographic(0, canvas.width, canvas.height, 0, -400, 400);
+    matrix = M4.translate(matrix, translation[0], translation[1], translation[2]);
+    matrix = M4.xRotate(matrix, rotation[0] * Math.PI / 180);
+    matrix = M4.yRotate(matrix, rotation[1] * Math.PI / 180);
+    matrix = M4.zRotate(matrix, rotation[2] * Math.PI / 180);
+
+    gl.uniformMatrix4fv(matLoc, false, matrix);
+    gl.drawArrays(gl.TRIANGLES, 0, 16 * 6);
+  }
+
+  // 3D "F" 形状的顶点 (16个面，每个面2个三角形)
+  function setGeometry(gl) {
+    const d = 30; // 深度
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      // 前面 (z=0)
+      0,0,0, 30,0,0, 0,150,0,  0,150,0, 30,0,0, 30,150,0,
+      30,0,0, 100,0,0, 30,30,0,  30,30,0, 100,0,0, 100,30,0,
+      30,60,0, 70,60,0, 30,90,0,  30,90,0, 70,60,0, 70,90,0,
+      // 后面 (z=d)
+      0,0,d, 0,150,d, 30,0,d,  0,150,d, 30,150,d, 30,0,d,
+      30,0,d, 30,30,d, 100,0,d,  30,30,d, 100,30,d, 100,0,d,
+      30,60,d, 30,90,d, 70,60,d,  30,90,d, 70,90,d, 70,60,d,
+      // 上面
+      0,0,0, 0,0,d, 100,0,0,  0,0,d, 100,0,d, 100,0,0,
+      // 右侧上部
+      100,0,0, 100,0,d, 100,30,0,  100,0,d, 100,30,d, 100,30,0,
+      // 下部横条底面
+      30,30,0, 30,30,d, 100,30,0,  30,30,d, 100,30,d, 100,30,0,
+      // 左侧竖条右面（上下部连接）
+      30,30,0, 30,60,0, 30,30,d,  30,30,d, 30,60,0, 30,60,d,
+      // 中间横条顶面
+      30,60,0, 30,60,d, 70,60,0,  30,60,d, 70,60,d, 70,60,0,
+      // 中间横条右面
+      70,60,0, 70,60,d, 70,90,0,  70,60,d, 70,90,d, 70,90,0,
+      // 中间横条底面
+      30,90,0, 70,90,0, 30,90,d,  30,90,d, 70,90,0, 70,90,d,
+      // 左侧竖条右面（中部以下）
+      30,90,0, 30,90,d, 30,150,0,  30,90,d, 30,150,d, 30,150,0,
+      // 底面
+      0,150,0, 30,150,0, 0,150,d,  0,150,d, 30,150,0, 30,150,d,
+      // 左面
+      0,0,0, 0,150,0, 0,0,d,  0,0,d, 0,150,0, 0,150,d,
+    ]), gl.STATIC_DRAW);
+  }
+
+  // 为每个面设置不同颜色
+  function setColors(gl) {
+    const faceColors = [
+      [200, 70, 120], [80, 70, 200], [70, 200, 210],
+      [200, 70, 120], [80, 70, 200], [70, 200, 210],
+      [200, 200, 70], [210, 100, 70], [210, 160, 70],
+      [70, 180, 210], [100, 70, 210], [76, 210, 100],
+      [140, 210, 80], [90, 130, 110], [160, 160, 220],
+      [255, 128, 64],
+    ];
+    const colors = [];
+    for (let f = 0; f < 16; f++) {
+      const c = faceColors[f % faceColors.length];
+      for (let v = 0; v < 6; v++) colors.push(...c);
+    }
+    gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(colors), gl.STATIC_DRAW);
+  }
+
+  function bind(id, valId, idx) {
+    document.getElementById(id).addEventListener('input', (e) => {
+      const v = +e.target.value;
+      document.getElementById(valId).textContent = v;
+      if (idx < 3) rotation[idx] = v; else translation[idx - 3] = v;
+      drawScene();
+    });
+  }
+  bind('rxSlider', 'rxVal', 0);
+  bind('rySlider', 'ryVal', 1);
+  bind('rzSlider', 'rzVal', 2);
+  bind('txSlider', 'txVal', 3);
+  bind('tySlider', 'tyVal', 4);
+
+  drawScene();
+</script>
+</body>
+</html>

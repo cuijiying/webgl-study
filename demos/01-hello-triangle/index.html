@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>01 - Hello Triangle</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>01 - Hello Triangle：第一个三角形</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>💡 核心知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>1. <code>gl.createShader()</code> 创建着色器</p>
+        <p>2. <code>gl.shaderSource()</code> 设置GLSL源码</p>
+        <p>3. <code>gl.compileShader()</code> 编译着色器</p>
+        <p>4. <code>gl.createProgram()</code> 创建程序</p>
+        <p>5. <code>gl.createBuffer()</code> 创建缓冲区</p>
+        <p>6. <code>gl.bufferData()</code> 上传顶点数据</p>
+        <p>7. <code>gl.drawArrays()</code> 执行绘制</p>
+        <hr style="border-color:#2a2a4a; margin:12px 0;">
+        <p style="color:#ffab40;">渲染管线流程：<br>
+        JavaScript数据 → 顶点着色器(逐顶点) → 光栅化 → 片元着色器(逐像素) → 屏幕</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 详解</h3>
+    <p>这是最基础的WebGL程序。我们告诉GPU绘制一个三角形，需要经过以下步骤：</p>
+    <p><strong>顶点着色器</strong>接收顶点位置数据（attribute），将其赋值给内置变量 <code>gl_Position</code>，决定顶点在裁剪空间(-1到1)中的位置。</p>
+    <p><strong>片元着色器</strong>为三角形内每个像素输出颜色值，赋给 <code>gl_FragColor</code>。</p>
+    <p>WebGL的坐标系：X轴向右为正，Y轴向上为正，范围均为 -1.0 到 +1.0（裁剪空间）。</p>
+  </div>
+</div>
+
+<!-- ===== 顶点着色器 ===== -->
+<script id="vertex-shader" type="x-shader/x-vertex">
+  // attribute: 从缓冲区接收的逐顶点数据
+  attribute vec2 a_position;
+
+  void main() {
+    // gl_Position 是内置变量，必须赋值，决定顶点在裁剪空间的位置
+    // 裁剪空间范围: x: -1~1, y: -1~1
+    gl_Position = vec4(a_position, 0.0, 1.0);
+  }
+</script>
+
+<!-- ===== 片元着色器 ===== -->
+<script id="fragment-shader" type="x-shader/x-fragment">
+  // 片元着色器需要精度声明
+  precision mediump float;
+
+  void main() {
+    // gl_FragColor 是内置变量，决定当前像素的颜色 (R, G, B, A)
+    gl_FragColor = vec4(0.3, 0.76, 0.97, 1.0); // 天蓝色
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+
+  // ====== 第一步：获取WebGL上下文 ======
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  if (!gl) {
+    alert('你的浏览器不支持WebGL！');
+  }
+
+  // ====== 第二步：获取着色器源码 ======
+  const vsSource = document.getElementById('vertex-shader').text;
+  const fsSource = document.getElementById('fragment-shader').text;
+
+  // ====== 第三步：编译着色器 & 链接程序 ======
+  const program = WebGLUtils.createProgramFromSources(gl, vsSource, fsSource);
+
+  // ====== 第四步：查找attribute位置 ======
+  // attribute的位置是在链接程序时确定的
+  const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
+
+  // ====== 第五步：创建缓冲区并写入三角形顶点数据 ======
+  const positionBuffer = gl.createBuffer();
+  // 将缓冲区绑定到 ARRAY_BUFFER 绑定点
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  // 三角形的三个顶点坐标（裁剪空间坐标，范围-1到1）
+  const positions = [
+    0.0,  0.5,   // 顶部
+   -0.5, -0.5,   // 左下
+    0.5, -0.5,   // 右下
+  ];
+  // 将JavaScript数组转为类型化数组，上传到GPU
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+  // ====== 第六步：渲染 ======
+  // 设置视口大小
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  // 清空画布为深色背景
+  gl.clearColor(0.04, 0.04, 0.1, 1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // 使用我们的着色器程序
+  gl.useProgram(program);
+
+  // 启用顶点属性
+  gl.enableVertexAttribArray(positionAttributeLocation);
+  // 绑定位置缓冲区
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  // 告诉WebGL如何从缓冲区中提取数据
+  gl.vertexAttribPointer(
+    positionAttributeLocation,
+    2,          // 每次取2个值（x, y）
+    gl.FLOAT,   // 数据类型为32位浮点数
+    false,      // 不需要归一化
+    0,          // stride=0，数据紧密排列
+    0           // offset=0，从缓冲区开头开始
+  );
+
+  // 绘制！gl.TRIANGLES 表示每3个顶点组成一个三角形
+  gl.drawArrays(gl.TRIANGLES, 0, 3); // 从第0个顶点开始，共3个顶点
+</script>
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>12 - 纹理贴图</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>12 - 纹理贴图（Texture Mapping）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>Y 旋转: <span class="value" id="ryVal">30</span>°</label>
+        <input type="range" id="rySlider" min="0" max="360" value="30">
+      </div>
+      <div class="control-group">
+        <label>X 旋转: <span class="value" id="rxVal">20</span>°</label>
+        <input type="range" id="rxSlider" min="0" max="360" value="20">
+      </div>
+      <div class="control-group">
+        <label>纹理缩放: <span class="value" id="tsVal">1.0</span></label>
+        <input type="range" id="tsSlider" min="10" max="300" value="100">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 纹理知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>纹理坐标(UV)</strong>: 范围 0~1，(0,0)左下，(1,1)右上</p>
+        <p><code>gl.createTexture()</code> 创建纹理对象</p>
+        <p><code>gl.texImage2D()</code> 上传图像数据</p>
+        <p><code>texture2D(sampler, uv)</code> 在着色器中采样纹理</p>
+        <p>纹理尺寸最好是2的幂次(如256×256)</p>
+        <p style="color:#ffab40;">此Demo使用程序生成的棋盘格纹理（无需加载外部图片）</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec2 a_texcoord;  // 纹理坐标
+  uniform mat4 u_matrix;
+  varying vec2 v_texcoord;
+
+  void main() {
+    gl_Position = u_matrix * a_position;
+    v_texcoord = a_texcoord;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec2 v_texcoord;
+  uniform sampler2D u_texture;  // 纹理采样器
+
+  void main() {
+    // texture2D: 从纹理中按UV坐标采样颜色
+    gl_FragColor = texture2D(u_texture, v_texcoord);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const texLoc = gl.getAttribLocation(program, 'a_texcoord');
+  const matLoc = gl.getUniformLocation(program, 'u_matrix');
+
+  let ry = 30, rx = 20, texScale = 1.0;
+
+  // 立方体顶点 + UV坐标
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  const s = 80;
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    // 前
+    -s,-s,s, s,-s,s, -s,s,s, -s,s,s, s,-s,s, s,s,s,
+    // 后
+    -s,-s,-s, -s,s,-s, s,-s,-s, s,-s,-s, -s,s,-s, s,s,-s,
+    // 上
+    -s,s,-s, -s,s,s, s,s,-s, s,s,-s, -s,s,s, s,s,s,
+    // 下
+    -s,-s,-s, s,-s,-s, -s,-s,s, -s,-s,s, s,-s,-s, s,-s,s,
+    // 右
+    s,-s,-s, s,s,-s, s,-s,s, s,-s,s, s,s,-s, s,s,s,
+    // 左
+    -s,-s,-s, -s,-s,s, -s,s,-s, -s,s,-s, -s,-s,s, -s,s,s,
+  ]), gl.STATIC_DRAW);
+
+  const texBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texBuf);
+
+  function updateUVs() {
+    const t = texScale;
+    gl.bindBuffer(gl.ARRAY_BUFFER, texBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      0,0, t,0, 0,t, 0,t, t,0, t,t,
+      0,0, 0,t, t,0, t,0, 0,t, t,t,
+      0,0, 0,t, t,0, t,0, 0,t, t,t,
+      0,0, t,0, 0,t, 0,t, t,0, t,t,
+      0,0, 0,t, t,0, t,0, 0,t, t,t,
+      0,0, t,0, 0,t, 0,t, t,0, t,t,
+    ]), gl.STATIC_DRAW);
+  }
+  updateUVs();
+
+  // 创建程序化棋盘格纹理
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  const size = 8;
+  const checkerboard = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const idx = (y * size + x) * 4;
+      const isWhite = (x + y) % 2 === 0;
+      checkerboard[idx]     = isWhite ? 240 : 50;   // R
+      checkerboard[idx + 1] = isWhite ? 240 : 120;  // G
+      checkerboard[idx + 2] = isWhite ? 240 : 200;  // B
+      checkerboard[idx + 3] = 255;                   // A
+    }
+  }
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, checkerboard);
+  // 纹理参数设置
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);  // 水平重复
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);  // 垂直重复
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(texLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, texBuf);
+    gl.vertexAttribPointer(texLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const aspect = canvas.width / canvas.height;
+    let matrix = M4.perspective(60 * Math.PI / 180, aspect, 1, 2000);
+    matrix = M4.translate(matrix, 0, 0, -250);
+    matrix = M4.xRotate(matrix, rx * Math.PI / 180);
+    matrix = M4.yRotate(matrix, ry * Math.PI / 180);
+
+    gl.uniformMatrix4fv(matLoc, false, matrix);
+
+    // 绑定纹理到纹理单元0
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 36);
+  }
+
+  document.getElementById('rySlider').addEventListener('input', (e) => { ry = +e.target.value; document.getElementById('ryVal').textContent = ry; drawScene(); });
+  document.getElementById('rxSlider').addEventListener('input', (e) => { rx = +e.target.value; document.getElementById('rxVal').textContent = rx; drawScene(); });
+  document.getElementById('tsSlider').addEventListener('input', (e) => {
+    texScale = +e.target.value / 100;
+    document.getElementById('tsVal').textContent = texScale.toFixed(1);
+    updateUVs();
+    drawScene();
+  });
+
+  drawScene();
+</script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>06 - 二维矩阵</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>06 - 二维矩阵变换（统一所有变换）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>X 平移: <span class="value" id="xVal">200</span>px</label>
+        <input type="range" id="xSlider" min="0" max="580" value="200">
+      </div>
+      <div class="control-group">
+        <label>Y 平移: <span class="value" id="yVal">100</span>px</label>
+        <input type="range" id="ySlider" min="0" max="380" value="100">
+      </div>
+      <div class="control-group">
+        <label>旋转: <span class="value" id="angleVal">0</span>°</label>
+        <input type="range" id="angleSlider" min="0" max="360" value="0">
+      </div>
+      <div class="control-group">
+        <label>X 缩放: <span class="value" id="sxVal">1.00</span></label>
+        <input type="range" id="sxSlider" min="-200" max="200" value="100">
+      </div>
+      <div class="control-group">
+        <label>Y 缩放: <span class="value" id="syVal">1.00</span></label>
+        <input type="range" id="sySlider" min="-200" max="200" value="100">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 矩阵的威力</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>所有2D变换都可以用一个 <strong>3×3矩阵</strong> 表示：</p>
+        <p><code>u_matrix</code> = 投影 × 平移 × 旋转 × 缩放</p>
+        <p style="color:#ffab40;">着色器中只需一次矩阵乘法！不再需要多个uniform。</p>
+        <p>矩阵运算在CPU端(JavaScript)完成，只传一个矩阵给GPU。</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 为什么用矩阵？</h3>
+    <p>之前我们在着色器中分别处理缩放、旋转、平移，代码越来越复杂。矩阵将所有变换统一为 <code>position = matrix × originalPosition</code>。</p>
+    <p>矩阵乘法的顺序很重要！<strong>先缩放(S) → 再旋转(R) → 后平移(T)</strong>，代码中写作 <code>T × R × S × position</code>（从右往左读）。</p>
+    <p>投影矩阵也合并在里面，将像素空间直接映射到裁剪空间。</p>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec2 a_position;
+  uniform mat3 u_matrix;   // 3x3矩阵，包含所有2D变换
+
+  void main() {
+    // 将2D位置扩展为齐次坐标（加上1），然后乘以矩阵
+    gl_Position = vec4((u_matrix * vec3(a_position, 1)).xy, 0, 1);
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  void main() {
+    gl_FragColor = vec4(0.2, 0.9, 0.5, 1.0);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const matLoc = gl.getUniformLocation(program, 'u_matrix');
+
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0, 0, 30, 0, 0, 150,   0, 150, 30, 0, 30, 150,
+    30, 0, 100, 0, 30, 30,  30, 30, 100, 0, 100, 30,
+    30, 60, 70, 60, 30, 90, 30, 90, 70, 60, 70, 90,
+  ]), gl.STATIC_DRAW);
+
+  let translation = [200, 100];
+  let angleInDegrees = 0;
+  let scale = [1, 1];
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    // 构建变换矩阵：投影 × 平移 × 旋转 × 缩放
+    const rad = angleInDegrees * Math.PI / 180;
+    let matrix = M3.projection(canvas.width, canvas.height);
+    matrix = M3.translate(matrix, translation[0], translation[1]);
+    matrix = M3.rotate(matrix, rad);
+    matrix = M3.scale(matrix, scale[0], scale[1]);
+
+    gl.uniformMatrix3fv(matLoc, false, matrix);
+    gl.drawArrays(gl.TRIANGLES, 0, 18);
+  }
+
+  function bind(id, valId, fn) {
+    document.getElementById(id).addEventListener('input', (e) => { fn(+e.target.value); drawScene(); });
+  }
+  bind('xSlider', 'xVal', (v) => { translation[0] = v; document.getElementById('xVal').textContent = v; });
+  bind('ySlider', 'yVal', (v) => { translation[1] = v; document.getElementById('yVal').textContent = v; });
+  bind('angleSlider', 'angleVal', (v) => { angleInDegrees = v; document.getElementById('angleVal').textContent = v; });
+  bind('sxSlider', 'sxVal', (v) => { scale[0] = v / 100; document.getElementById('sxVal').textContent = scale[0].toFixed(2); });
+  bind('sySlider', 'syVal', (v) => { scale[1] = v / 100; document.getElementById('syVal').textContent = scale[1].toFixed(2); });
+
+  drawScene();
+</script>
+</body>
+</html>

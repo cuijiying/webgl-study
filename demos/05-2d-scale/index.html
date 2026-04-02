@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>05 - 二维缩放</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>05 - 二维缩放</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>X 缩放: <span class="value" id="sxVal">1.0</span></label>
+        <input type="range" id="sxSlider" min="-200" max="200" value="100">
+      </div>
+      <div class="control-group">
+        <label>Y 缩放: <span class="value" id="syVal">1.0</span></label>
+        <input type="range" id="sySlider" min="-200" max="200" value="100">
+      </div>
+      <div class="control-group">
+        <label>旋转: <span class="value" id="angleVal">0</span>°</label>
+        <input type="range" id="angleSlider" min="0" max="360" value="0">
+      </div>
+      <div class="control-group">
+        <label>X 平移: <span class="value" id="xVal">200</span>px</label>
+        <input type="range" id="xSlider" min="0" max="580" value="200">
+      </div>
+      <div class="control-group">
+        <label>Y 平移: <span class="value" id="yVal">150</span>px</label>
+        <input type="range" id="ySlider" min="0" max="380" value="150">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>缩放 = 位置 × 缩放因子</p>
+        <p>缩放因子为负数 → 镜像翻转</p>
+        <p style="color:#ffab40;">变换顺序：先缩放 → 再旋转 → 最后平移</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec2 a_position;
+  uniform vec2 u_resolution;
+  uniform vec2 u_translation;
+  uniform vec2 u_rotation;
+  uniform vec2 u_scale;
+
+  void main() {
+    // 1. 先缩放
+    vec2 scaledPosition = a_position * u_scale;
+    // 2. 再旋转
+    vec2 rotatedPosition = vec2(
+      scaledPosition.x * u_rotation.y - scaledPosition.y * u_rotation.x,
+      scaledPosition.x * u_rotation.x + scaledPosition.y * u_rotation.y
+    );
+    // 3. 最后平移
+    vec2 position = rotatedPosition + u_translation;
+    vec2 clipSpace = (position / u_resolution) * 2.0 - 1.0;
+    gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  void main() {
+    gl_FragColor = vec4(0.6, 0.3, 0.9, 1.0);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const resLoc = gl.getUniformLocation(program, 'u_resolution');
+  const transLoc = gl.getUniformLocation(program, 'u_translation');
+  const rotLoc = gl.getUniformLocation(program, 'u_rotation');
+  const scaleLoc = gl.getUniformLocation(program, 'u_scale');
+
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0, 0, 30, 0, 0, 150,   0, 150, 30, 0, 30, 150,
+    30, 0, 100, 0, 30, 30,  30, 30, 100, 0, 100, 30,
+    30, 60, 70, 60, 30, 90, 30, 90, 70, 60, 70, 90,
+  ]), gl.STATIC_DRAW);
+
+  let translation = [200, 150];
+  let angleInDegrees = 0;
+  let scale = [1.0, 1.0];
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.uniform2f(transLoc, translation[0], translation[1]);
+    const rad = angleInDegrees * Math.PI / 180;
+    gl.uniform2f(rotLoc, Math.sin(rad), Math.cos(rad));
+    gl.uniform2f(scaleLoc, scale[0], scale[1]);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 18);
+  }
+
+  function setupSlider(id, valId, fn) {
+    document.getElementById(id).addEventListener('input', (e) => {
+      fn(+e.target.value);
+      drawScene();
+    });
+  }
+  setupSlider('sxSlider', 'sxVal', (v) => { scale[0] = v / 100; document.getElementById('sxVal').textContent = scale[0].toFixed(2); });
+  setupSlider('sySlider', 'syVal', (v) => { scale[1] = v / 100; document.getElementById('syVal').textContent = scale[1].toFixed(2); });
+  setupSlider('angleSlider', 'angleVal', (v) => { angleInDegrees = v; document.getElementById('angleVal').textContent = v; });
+  setupSlider('xSlider', 'xVal', (v) => { translation[0] = v; document.getElementById('xVal').textContent = v; });
+  setupSlider('ySlider', 'yVal', (v) => { translation[1] = v; document.getElementById('yVal').textContent = v; });
+
+  drawScene();
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>13 - 绘制多个物体</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>13 - 绘制多个物体</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>相机角度: <span class="value" id="camVal">0</span>°</label>
+        <input type="range" id="camSlider" min="0" max="360" value="0">
+      </div>
+      <div class="control-group">
+        <label>物体数量: <span class="value" id="countVal">6</span></label>
+        <input type="range" id="countSlider" min="1" max="20" value="6" step="1">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>关键模式</strong>：一个着色器程序，多次 draw call</p>
+        <p>每个物体有各自的：</p>
+        <p>• 模型矩阵（位置/旋转/缩放）</p>
+        <p>• Uniform 值（颜色等）</p>
+        <p>共享的：</p>
+        <p>• 同一个着色器程序</p>
+        <p>• 同一套投影 + 视图矩阵</p>
+        <p>• 同一组顶点缓冲区（相同几何体）</p>
+        <p style="color:#ffab40;">渲染循环：设置共享状态 → 对每个物体设置各自 uniform → drawArrays</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec3 a_normal;
+  uniform mat4 u_worldViewProjection;
+  uniform mat4 u_world;
+  varying vec3 v_normal;
+
+  void main() {
+    gl_Position = u_worldViewProjection * a_position;
+    v_normal = mat3(u_world) * a_normal;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec3 v_normal;
+  uniform vec3 u_lightDir;
+  uniform vec4 u_color;
+
+  void main() {
+    vec3 normal = normalize(v_normal);
+    float light = max(dot(normal, u_lightDir), 0.0);
+    gl_FragColor = vec4(u_color.rgb * (light * 0.8 + 0.2), u_color.a);
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const normalLoc = gl.getAttribLocation(program, 'a_normal');
+  const wvpLoc = gl.getUniformLocation(program, 'u_worldViewProjection');
+  const worldLoc = gl.getUniformLocation(program, 'u_world');
+  const lightDirLoc = gl.getUniformLocation(program, 'u_lightDir');
+  const colorLoc = gl.getUniformLocation(program, 'u_color');
+
+  // 创建立方体
+  const s = 40;
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -s,-s,s, s,-s,s, -s,s,s, -s,s,s, s,-s,s, s,s,s,
+    -s,-s,-s, -s,s,-s, s,-s,-s, s,-s,-s, -s,s,-s, s,s,-s,
+    -s,s,-s, -s,s,s, s,s,-s, s,s,-s, -s,s,s, s,s,s,
+    -s,-s,-s, s,-s,-s, -s,-s,s, -s,-s,s, s,-s,-s, s,-s,s,
+    s,-s,-s, s,s,-s, s,-s,s, s,-s,s, s,s,-s, s,s,s,
+    -s,-s,-s, -s,-s,s, -s,s,-s, -s,s,-s, -s,-s,s, -s,s,s,
+  ]), gl.STATIC_DRAW);
+
+  const normalBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1,
+    0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1, 0,0,-1,
+    0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0, 0,1,0,
+    0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0, 0,-1,0,
+    1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,0,0,
+    -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0, -1,0,0,
+  ]), gl.STATIC_DRAW);
+
+  // 预定义颜色
+  const colors = [
+    [1.0, 0.3, 0.3, 1], [0.3, 1.0, 0.3, 1], [0.3, 0.3, 1.0, 1],
+    [1.0, 1.0, 0.3, 1], [1.0, 0.3, 1.0, 1], [0.3, 1.0, 1.0, 1],
+    [1.0, 0.6, 0.2, 1], [0.6, 0.2, 1.0, 1], [0.2, 1.0, 0.6, 1],
+    [0.9, 0.9, 0.9, 1], [0.5, 0.8, 0.3, 1], [0.8, 0.3, 0.5, 1],
+    [0.3, 0.5, 0.8, 1], [0.8, 0.8, 0.3, 1], [0.3, 0.8, 0.8, 1],
+    [0.9, 0.5, 0.5, 1], [0.5, 0.9, 0.5, 1], [0.5, 0.5, 0.9, 1],
+    [0.7, 0.7, 0.3, 1], [0.3, 0.7, 0.7, 1],
+  ];
+
+  let camAngle = 0;
+  let objectCount = 6;
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+
+    // ====== 共享状态：只设置一次 ======
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(normalLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuf);
+    gl.vertexAttribPointer(normalLoc, 3, gl.FLOAT, false, 0, 0);
+
+    const aspect = canvas.width / canvas.height;
+    const projMatrix = M4.perspective(60 * Math.PI / 180, aspect, 1, 2000);
+    const camRad = camAngle * Math.PI / 180;
+    const camPos = [Math.sin(camRad) * 350, 150, Math.cos(camRad) * 350];
+    const viewMatrix = M4.inverse(M4.lookAt(camPos, [0, 0, 0], [0, 1, 0]));
+    const viewProjMatrix = M4.multiply(projMatrix, viewMatrix);
+
+    const lightDir = M4.normalize([0.5, 0.7, 1]);
+    gl.uniform3fv(lightDirLoc, lightDir);
+
+    // ====== 每个物体各自设置 ======
+    const radius = 120;
+    for (let i = 0; i < objectCount; i++) {
+      const angle = (i / objectCount) * Math.PI * 2;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      const y = (i % 3 - 1) * 50;
+
+      let worldMatrix = M4.translation(x, y, z);
+      worldMatrix = M4.yRotate(worldMatrix, angle);
+      worldMatrix = M4.scale(worldMatrix, 0.5 + (i % 3) * 0.3, 0.5 + (i % 3) * 0.3, 0.5 + (i % 3) * 0.3);
+
+      const wvp = M4.multiply(viewProjMatrix, worldMatrix);
+
+      gl.uniformMatrix4fv(wvpLoc, false, wvp);
+      gl.uniformMatrix4fv(worldLoc, false, worldMatrix);
+      gl.uniform4fv(colorLoc, colors[i % colors.length]);
+
+      // 每个物体一次drawArrays
+      gl.drawArrays(gl.TRIANGLES, 0, 36);
+    }
+  }
+
+  document.getElementById('camSlider').addEventListener('input', (e) => {
+    camAngle = +e.target.value;
+    document.getElementById('camVal').textContent = camAngle;
+    drawScene();
+  });
+  document.getElementById('countSlider').addEventListener('input', (e) => {
+    objectCount = +e.target.value;
+    document.getElementById('countVal').textContent = objectCount;
+    drawScene();
+  });
+
+  drawScene();
+</script>
+</body>
+</html>

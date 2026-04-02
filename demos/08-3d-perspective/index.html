@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>08 - 三维透视投影</title>
+  <link rel="stylesheet" href="../../css/style.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回目录</a>
+    <h1>08 - 三维透视投影（近大远小）</h1>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎮 交互控制</h3>
+      <div class="control-group">
+        <label>视野角(FOV): <span class="value" id="fovVal">60</span>°</label>
+        <input type="range" id="fovSlider" min="10" max="170" value="60">
+      </div>
+      <div class="control-group">
+        <label>X 旋转: <span class="value" id="rxVal">20</span>°</label>
+        <input type="range" id="rxSlider" min="0" max="360" value="20">
+      </div>
+      <div class="control-group">
+        <label>Y 旋转: <span class="value" id="ryVal">30</span>°</label>
+        <input type="range" id="rySlider" min="0" max="360" value="30">
+      </div>
+      <div class="control-group">
+        <label>Z 距离: <span class="value" id="zVal">-360</span></label>
+        <input type="range" id="zSlider" min="-800" max="-100" value="-360">
+      </div>
+      <hr style="border-color:#2a2a4a; margin:16px 0;">
+      <h3>💡 透视投影</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p><strong>FOV</strong>: 视野角，越大看到越多（鱼眼效果）</p>
+        <p><strong>Aspect</strong>: 宽高比 = canvas.width / canvas.height</p>
+        <p><strong>Near/Far</strong>: 近裁面和远裁面，定义可见范围</p>
+        <p style="color:#ffab40;">透视的核心：<code>gl_Position.w</code> 不再是1，GPU会自动做透视除法 (x/w, y/w, z/w)</p>
+        <p>绘制5个"F"，远处的更小 — 这就是透视！</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script id="vertex-shader" type="x-shader/x-vertex">
+  attribute vec4 a_position;
+  attribute vec4 a_color;
+  uniform mat4 u_matrix;
+  varying vec4 v_color;
+
+  void main() {
+    gl_Position = u_matrix * a_position;
+    v_color = a_color;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision mediump float;
+  varying vec4 v_color;
+  void main() {
+    gl_FragColor = v_color;
+  }
+</script>
+
+<script src="../../js/webgl-utils.js"></script>
+<script>
+  'use strict';
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  const program = WebGLUtils.createProgramFromSources(gl,
+    document.getElementById('vertex-shader').text,
+    document.getElementById('fragment-shader').text
+  );
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  const colorLoc = gl.getAttribLocation(program, 'a_color');
+  const matLoc = gl.getUniformLocation(program, 'u_matrix');
+
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  setFGeometry(gl);
+
+  const colorBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+  setFColors(gl);
+
+  let fov = 60, rx = 20, ry = 30, tz = -360;
+
+  function drawScene() {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0.04, 0.04, 0.1, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE); // 背面剔除
+    gl.useProgram(program);
+
+    gl.enableVertexAttribArray(posLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    gl.enableVertexAttribArray(colorLoc);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+    gl.vertexAttribPointer(colorLoc, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+
+    const aspect = canvas.width / canvas.height;
+    const projMatrix = M4.perspective(fov * Math.PI / 180, aspect, 1, 2000);
+
+    // 绘制5个"F"，沿Z轴排列
+    for (let i = 0; i < 5; i++) {
+      let matrix = projMatrix;
+      matrix = M4.translate(matrix, 0, 0, tz - i * 80);
+      matrix = M4.xRotate(matrix, rx * Math.PI / 180);
+      matrix = M4.yRotate(matrix, ry * Math.PI / 180);
+      // 将F的原点移到中心
+      matrix = M4.translate(matrix, -50, -75, -15);
+
+      gl.uniformMatrix4fv(matLoc, false, matrix);
+      gl.drawArrays(gl.TRIANGLES, 0, 16 * 6);
+    }
+  }
+
+  function setFGeometry(gl) {
+    const d = 30;
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      0,0,0, 30,0,0, 0,150,0,  0,150,0, 30,0,0, 30,150,0,
+      30,0,0, 100,0,0, 30,30,0,  30,30,0, 100,0,0, 100,30,0,
+      30,60,0, 70,60,0, 30,90,0,  30,90,0, 70,60,0, 70,90,0,
+      0,0,d, 0,150,d, 30,0,d,  0,150,d, 30,150,d, 30,0,d,
+      30,0,d, 30,30,d, 100,0,d,  30,30,d, 100,30,d, 100,0,d,
+      30,60,d, 30,90,d, 70,60,d,  30,90,d, 70,90,d, 70,60,d,
+      0,0,0, 0,0,d, 100,0,0,  0,0,d, 100,0,d, 100,0,0,
+      100,0,0, 100,0,d, 100,30,0,  100,0,d, 100,30,d, 100,30,0,
+      30,30,0, 30,30,d, 100,30,0,  30,30,d, 100,30,d, 100,30,0,
+      30,30,0, 30,60,0, 30,30,d,  30,30,d, 30,60,0, 30,60,d,
+      30,60,0, 30,60,d, 70,60,0,  30,60,d, 70,60,d, 70,60,0,
+      70,60,0, 70,60,d, 70,90,0,  70,60,d, 70,90,d, 70,90,0,
+      30,90,0, 70,90,0, 30,90,d,  30,90,d, 70,90,0, 70,90,d,
+      30,90,0, 30,90,d, 30,150,0,  30,90,d, 30,150,d, 30,150,0,
+      0,150,0, 30,150,0, 0,150,d,  0,150,d, 30,150,0, 30,150,d,
+      0,0,0, 0,150,0, 0,0,d,  0,0,d, 0,150,0, 0,150,d,
+    ]), gl.STATIC_DRAW);
+  }
+
+  function setFColors(gl) {
+    const faceColors = [
+      [200,70,120],[80,70,200],[70,200,210],[200,70,120],[80,70,200],[70,200,210],
+      [200,200,70],[210,100,70],[210,160,70],[70,180,210],[100,70,210],[76,210,100],
+      [140,210,80],[90,130,110],[160,160,220],[255,128,64]
+    ];
+    const colors = [];
+    for (let f = 0; f < 16; f++) {
+      const c = faceColors[f];
+      for (let v = 0; v < 6; v++) colors.push(...c);
+    }
+    gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(colors), gl.STATIC_DRAW);
+  }
+
+  function bind(id, valId, fn) {
+    document.getElementById(id).addEventListener('input', (e) => { fn(+e.target.value); document.getElementById(valId).textContent = +e.target.value; drawScene(); });
+  }
+  bind('fovSlider', 'fovVal', (v) => fov = v);
+  bind('rxSlider', 'rxVal', (v) => rx = v);
+  bind('rySlider', 'ryVal', (v) => ry = v);
+  bind('zSlider', 'zVal', (v) => tz = v);
+
+  drawScene();
+</script>
+</body>
+</html>
