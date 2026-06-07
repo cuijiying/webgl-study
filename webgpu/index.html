@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 学习练习集</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <link rel="stylesheet" href="css/doc.css">
+</head>
+<body>
+  <div class="hero wgpu">
+    <h1>🚀 WebGPU 学习练习集</h1>
+    <p>下一代 Web 图形与计算 API。与 <a href="../index.html" style="color:#ff6ec7;">WebGL 教程</a> 一一对应，从第一个三角形到计算着色器。每个 Demo 都配有<strong style="color:#fff;">详细说明文档</strong> + 可交互演示。</p>
+  </div>
+
+  <div class="chapters">
+    <div class="callout note" style="max-width:1100px;margin:0 auto 24px;">
+      <p><span class="ic">ℹ️</span><strong>运行要求：</strong>WebGPU 需要 Chrome 113+ / Edge 113+ / Safari 17.4+，且开启硬件加速。每个 Demo 页右上角都有「📖 查看详细文档」按钮。</p>
+    </div>
+
+    <!-- 第一章 -->
+    <div class="chapter wgpu">
+      <h2>一、基础概念</h2>
+      <div class="demo-grid">
+        <a class="demo-card wgpu" href="demos/01-hello-triangle/index.html">
+          <span class="num">01</span>
+          <h3>Hello Triangle - 第一个三角形</h3>
+          <p>WebGPU 完整启动流程：适配器/设备、配置 canvas、WGSL 着色器、渲染管线、命令编码器与渲染通道。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/02-how-it-works/index.html">
+          <span class="num">02</span>
+          <h3>工作原理 - 顶点缓冲与插值</h3>
+          <p>使用顶点缓冲区传入位置+颜色，理解 inter-stage 变量插值、@location 绑定，以及顶点/片元阶段的数据流。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第二章 -->
+    <div class="chapter wgpu">
+      <h2>二、Uniform 与二维变换</h2>
+      <div class="demo-grid">
+        <a class="demo-card wgpu" href="demos/03-2d-translation/index.html">
+          <span class="num">03</span>
+          <h3>二维平移 (Uniform 入门)</h3>
+          <p>第一次使用 Uniform Buffer 与 Bind Group。通过滑块把平移量传入着色器。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/04-2d-rotation/index.html">
+          <span class="num">04</span>
+          <h3>二维旋转</h3>
+          <p>在 WGSL 中用 sin/cos 实现旋转，理解三角函数与旋转矩阵的关系。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/05-2d-scale/index.html">
+          <span class="num">05</span>
+          <h3>二维缩放</h3>
+          <p>X/Y 独立缩放与镜像翻转，理解缩放对几何的影响。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/06-2d-matrices/index.html">
+          <span class="num">06</span>
+          <h3>二维矩阵变换</h3>
+          <p>将平移/旋转/缩放统一为 3x3（mat3x3）矩阵，理解 WGSL 矩阵内存对齐。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第三章 -->
+    <div class="chapter wgpu">
+      <h2>三、三维空间</h2>
+      <div class="demo-grid">
+        <a class="demo-card wgpu" href="demos/07-3d-orthographic/index.html">
+          <span class="num">07</span>
+          <h3>三维正射投影</h3>
+          <p>3D 的 "F" 字母，深度测试（depth texture），WebGPU 的 [0,1] 深度范围与背面剔除。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/08-3d-perspective/index.html">
+          <span class="num">08</span>
+          <h3>三维透视投影</h3>
+          <p>近大远小的透视矩阵，FOV / 宽高比 / 近远裁面。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/09-3d-camera/index.html">
+          <span class="num">09</span>
+          <h3>三维相机</h3>
+          <p>lookAt 矩阵与视图矩阵，让相机围绕目标旋转观察。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第四章 -->
+    <div class="chapter wgpu">
+      <h2>四、光照</h2>
+      <div class="demo-grid">
+        <a class="demo-card wgpu" href="demos/10-directional-light/index.html">
+          <span class="num">10</span>
+          <h3>方向光源</h3>
+          <p>法线、点积、法线矩阵，实现方向光（类太阳光）漫反射。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/11-point-light/index.html">
+          <span class="num">11</span>
+          <h3>点光源 + 高光</h3>
+          <p>点光源方向计算与 Blinn-Phong 高光反射。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第五章 -->
+    <div class="chapter wgpu">
+      <h2>五、纹理</h2>
+      <div class="demo-grid">
+        <a class="demo-card wgpu" href="demos/12-textures/index.html">
+          <span class="num">12</span>
+          <h3>纹理贴图</h3>
+          <p>GPUTexture、GPUSampler、copyExternalImageToTexture，UV 坐标与采样。</p>
+        </a>
+      </div>
+    </div>
+
+    <!-- 第六章 -->
+    <div class="chapter wgpu">
+      <h2>六、组织与进阶</h2>
+      <div class="demo-grid">
+        <a class="demo-card wgpu" href="demos/13-multiple-objects/index.html">
+          <span class="num">13</span>
+          <h3>绘制多个物体</h3>
+          <p>动态 Uniform Offset / 多个 Bind Group，在一个渲染通道中绘制多个物体。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/14-animation/index.html">
+          <span class="num">14</span>
+          <h3>动画</h3>
+          <p>requestAnimationFrame + 每帧更新 Uniform，deltaTime 时间管理。</p>
+        </a>
+        <a class="demo-card wgpu" href="demos/15-compute-shader/index.html">
+          <span class="num">15</span>
+          <h3>计算着色器 (Compute)</h3>
+          <p>WebGPU 杀手级特性！用 compute shader 做图像处理（卷积核），workgroup 与 storage buffer。</p>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <footer style="text-align:center; padding:40px; color:#546e7a; font-size:0.85rem;">
+    参考：<a href="https://webgpufundamentals.org/" target="_blank" style="color:#ff6ec7;">WebGPU Fundamentals</a> ·
+    <a href="https://www.w3.org/TR/webgpu/" target="_blank" style="color:#ff6ec7;">W3C WebGPU 规范</a> ·
+    <a href="https://www.w3.org/TR/WGSL/" target="_blank" style="color:#ff6ec7;">WGSL 规范</a>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 01 Hello Triangle</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>01 · Hello Triangle —— 第一个三角形</h1>
+  <p class="subtitle">理解 WebGPU 的最小启动流程与「命令录制 + 批量提交」模型。</p>
+
+  <h2>一、本节目标</h2>
+  <ul>
+    <li>掌握 WebGPU 初始化四件套：<code>adapter → device → context → configure</code></li>
+    <li>编写第一个 WGSL 着色器（顶点 + 片元）</li>
+    <li>理解渲染管线 (Render Pipeline) 的作用</li>
+    <li>掌握命令编码器、渲染通道、队列提交的工作方式</li>
+  </ul>
+
+  <h2>二、WebGPU vs WebGL 的根本区别</h2>
+  <p>如果你学过 WebGL，第一件要重塑的认知是：<strong>WebGL 是「即时模式」，每个 <code>gl.xxx()</code> 调用会立刻影响 GPU 状态；WebGPU 是「录制模式」</strong>，你先把所有指令录进一个命令缓冲（Command Buffer），最后一次性提交到 GPU 队列执行。</p>
+  <table>
+    <tr><th>对比项</th><th>WebGL</th><th>WebGPU</th></tr>
+    <tr><td>编程模型</td><td>即时、全局状态机</td><td>命令录制 + 提交</td></tr>
+    <tr><td>着色器语言</td><td>GLSL</td><td>WGSL</td></tr>
+    <tr><td>状态管理</td><td>大量 <code>gl.enable/bind</code></td><td>打包进 Pipeline / BindGroup</td></tr>
+    <tr><td>深度范围 (NDC z)</td><td>-1 ~ 1</td><td>0 ~ 1</td></tr>
+    <tr><td>异步</td><td>基本同步</td><td>初始化大量使用 Promise</td></tr>
+    <tr><td>计算能力</td><td>无原生 compute</td><td>原生 Compute Shader</td></tr>
+  </table>
+
+  <h2>三、逐步拆解代码</h2>
+
+  <h3>1) 初始化：获取设备并配置画布</h3>
+  <pre><code><span class="tk">if</span> (!navigator.gpu) <span class="tk">throw new</span> <span class="tf">Error</span>(<span class="ts">'不支持 WebGPU'</span>);
+<span class="tc">// 适配器 = 一块物理/虚拟 GPU 的抽象</span>
+<span class="tk">const</span> adapter = <span class="tk">await</span> navigator.gpu.<span class="tf">requestAdapter</span>();
+<span class="tc">// 设备 = 与该 GPU 通信的逻辑句柄，创建资源都靠它</span>
+<span class="tk">const</span> device = <span class="tk">await</span> adapter.<span class="tf">requestDevice</span>();
+<span class="tk">const</span> context = canvas.<span class="tf">getContext</span>(<span class="ts">'webgpu'</span>);
+<span class="tk">const</span> format = navigator.gpu.<span class="tf">getPreferredCanvasFormat</span>();
+context.<span class="tf">configure</span>({ device, format, alphaMode: <span class="ts">'opaque'</span> });</code></pre>
+  <div class="callout note">
+    <p><span class="ic">📌</span><strong>adapter / device / context 的关系：</strong></p>
+    <p><strong>adapter</strong> 是「哪块 GPU」；<strong>device</strong> 是「与它对话的逻辑设备」，所有缓冲区、纹理、管线都由 device 创建；<strong>context</strong> 是 canvas 的 WebGPU 上下文，负责把渲染结果显示到屏幕。</p>
+  </div>
+  <p><code>getPreferredCanvasFormat()</code> 返回当前平台最优的纹理格式（通常是 <code>bgra8unorm</code>），用它配置 canvas 能避免一次额外的格式转换。</p>
+
+  <h3>2) 编写 WGSL 着色器</h3>
+  <pre><code><span class="tk">@vertex</span>
+<span class="tk">fn</span> <span class="tf">vs</span>(<span class="tk">@builtin</span>(vertex_index) i : u32) -> <span class="tk">@builtin</span>(position) vec4f {
+  <span class="tk">let</span> pos = <span class="tf">array</span>&lt;vec2f, <span class="tn">3</span>&gt;(
+    <span class="tf">vec2f</span>( <span class="tn">0.0</span>,  <span class="tn">0.5</span>),
+    <span class="tf">vec2f</span>(<span class="tn">-0.5</span>, <span class="tn">-0.5</span>),
+    <span class="tf">vec2f</span>( <span class="tn">0.5</span>, <span class="tn">-0.5</span>),
+  );
+  <span class="tk">return</span> <span class="tf">vec4f</span>(pos[i], <span class="tn">0.0</span>, <span class="tn">1.0</span>);
+}
+
+<span class="tk">@fragment</span>
+<span class="tk">fn</span> <span class="tf">fs</span>() -> <span class="tk">@location</span>(<span class="tn">0</span>) vec4f {
+  <span class="tk">return</span> <span class="tf">vec4f</span>(<span class="tn">1.0</span>, <span class="tn">0.43</span>, <span class="tn">0.78</span>, <span class="tn">1.0</span>);
+}</code></pre>
+  <p>WGSL 语法要点：</p>
+  <ul>
+    <li><code>@vertex</code> / <code>@fragment</code> 是<strong>着色器阶段属性</strong>，标记函数入口。</li>
+    <li><code>@builtin(vertex_index)</code> 是内置输入，相当于 WebGL 的 <code>gl_VertexID</code>，告诉你当前是第几个顶点（0、1、2）。</li>
+    <li><code>@builtin(position)</code> 是必须返回的裁剪空间坐标，相当于 <code>gl_Position</code>。</li>
+    <li><code>@location(0)</code> 表示片元着色器输出写到第 0 个颜色附件（即 canvas）。</li>
+    <li><code>vec4f</code> 是 <code>vec4&lt;f32&gt;</code> 的简写；<code>array&lt;vec2f, 3&gt;</code> 是定长数组。</li>
+  </ul>
+  <div class="callout tip">
+    <p><span class="ic">💡</span>本例没有任何顶点缓冲区！我们利用 <code>vertex_index</code> 在着色器里查表得到坐标。这是教学常用技巧，下一节才会引入真正的顶点缓冲区。</p>
+  </div>
+
+  <h3>3) 创建渲染管线</h3>
+  <pre><code><span class="tk">const</span> module = device.<span class="tf">createShaderModule</span>({ code: shaderCode });
+<span class="tk">const</span> pipeline = device.<span class="tf">createRenderPipeline</span>({
+  layout: <span class="ts">'auto'</span>,
+  vertex:   { module, entryPoint: <span class="ts">'vs'</span> },
+  fragment: { module, entryPoint: <span class="ts">'fs'</span>, targets: [{ format }] },
+  primitive: { topology: <span class="ts">'triangle-list'</span> },
+});</code></pre>
+  <p>管线把「用哪个着色器、顶点如何排布、输出什么格式、画三角还是画线」等状态<strong>一次性打包固化</strong>。这正是 WebGPU 高性能的关键——驱动可以提前做好校验和优化，运行时只需切换管线对象。</p>
+  <ul>
+    <li><code>layout:'auto'</code> 让 WebGPU 根据着色器自动推断绑定布局（后面用到 Uniform 时会手动指定）。</li>
+    <li><code>targets:[{ format }]</code> 必须与 canvas 配置的格式一致。</li>
+    <li><code>topology:'triangle-list'</code>：每 3 个顶点构成一个三角形。</li>
+  </ul>
+
+  <h3>4) 录制命令并提交</h3>
+  <pre><code><span class="tk">const</span> encoder = device.<span class="tf">createCommandEncoder</span>();
+<span class="tk">const</span> pass = encoder.<span class="tf">beginRenderPass</span>({
+  colorAttachments: [{
+    view: context.<span class="tf">getCurrentTexture</span>().<span class="tf">createView</span>(),
+    clearValue: { r: <span class="tn">0.04</span>, g: <span class="tn">0.04</span>, b: <span class="tn">0.1</span>, a: <span class="tn">1</span> },
+    loadOp: <span class="ts">'clear'</span>,   <span class="tc">// 通道开始时清屏</span>
+    storeOp: <span class="ts">'store'</span>,  <span class="tc">// 通道结束时保存结果</span>
+  }],
+});
+pass.<span class="tf">setPipeline</span>(pipeline);
+pass.<span class="tf">draw</span>(<span class="tn">3</span>);  <span class="tc">// 顶点数 = 3</span>
+pass.<span class="tf">end</span>();
+device.queue.<span class="tf">submit</span>([encoder.<span class="tf">finish</span>()]);</code></pre>
+  <div class="callout note">
+    <p><span class="ic">🔁</span><strong>四个核心对象的流水线：</strong></p>
+    <p><strong>CommandEncoder</strong>（命令编码器）→ <strong>RenderPass</strong>（渲染通道，描述往哪张纹理画、是否清屏）→ <code>encoder.finish()</code> 产出 <strong>CommandBuffer</strong> → <code>queue.submit()</code> 交给 GPU 执行。</p>
+  </div>
+  <ul>
+    <li><code>getCurrentTexture()</code> 每帧获取 canvas 当前可写的纹理，必须每帧重新获取。</li>
+    <li><code>loadOp:'clear'</code> + <code>clearValue</code> 等价于 WebGL 的 <code>clearColor + clear</code>。</li>
+    <li>命令缓冲是<strong>一次性</strong>的，<code>finish()</code> 后不能再录制；下一帧要重新创建 encoder。</li>
+  </ul>
+
+  <h2>四、常见坑</h2>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span><strong>必须用本地服务器打开</strong>：WebGPU 在 <code>file://</code> 下通常被禁用。请用 VS Code「Live Server」或 <code>npx serve</code> 启动后访问 <code>http://localhost</code>。</p>
+    <p><span class="ic">⚠️</span><strong>targets.format 与 configure 的 format 不一致</strong>会报管线创建错误。两处都用 <code>getPreferredCanvasFormat()</code> 即可。</p>
+    <p><span class="ic">⚠️</span><strong>忘记 <code>pass.end()</code> 或 <code>queue.submit()</code></strong>：什么都不会显示，但也不会报错，最易踩。</p>
+  </div>
+
+  <h2>五、思维导图</h2>
+  <pre><code>navigator.gpu
+   │ requestAdapter()
+   ▼
+ adapter ── requestDevice() ──► device ──┐
+                                         │ createShaderModule
+ canvas.getContext('webgpu')             │ createRenderPipeline
+   │ configure(device, format)           │
+   ▼                                      ▼
+ context ──getCurrentTexture()──► view ─► RenderPass
+                                          │ setPipeline / draw(3)
+                                          ▼
+                              encoder.finish() ─► queue.submit()</code></pre>
+
+  <h2>六、动手练习</h2>
+  <ol>
+    <li>把片元颜色改成根据 <code>@builtin(position)</code> 渐变（提示：position 是屏幕像素坐标）。</li>
+    <li>把 <code>draw(3)</code> 改成 <code>draw(6)</code> 并在数组里加 3 个顶点，画出两个三角形。</li>
+    <li>把 <code>topology</code> 改成 <code>'line-list'</code> 或 <code>'point-list'</code> 观察区别。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <span class="spacer"></span>
+    <a class="live-btn" href="../02-how-it-works/index.html">下一节：02 工作原理 →</a>
+  </div>
+</article>
+</body>
+</html>

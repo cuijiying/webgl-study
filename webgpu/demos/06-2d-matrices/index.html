@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 06 - 二维矩阵</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>06 - 二维矩阵变换</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>平移 X</label><input type="range" id="tx" min="0" max="600" value="250"><div class="value" id="txVal">250</div>
+      </div>
+      <div class="control-group">
+        <label>平移 Y</label><input type="range" id="ty" min="0" max="400" value="150"><div class="value" id="tyVal">150</div>
+      </div>
+      <div class="control-group">
+        <label>旋转</label><input type="range" id="ang" min="0" max="360" value="20"><div class="value" id="angVal">20°</div>
+      </div>
+      <div class="control-group">
+        <label>缩放 X</label><input type="range" id="sx" min="-2" max="2" step="0.1" value="1"><div class="value" id="sxVal">1.0</div>
+      </div>
+      <div class="control-group">
+        <label>缩放 Y</label><input type="range" id="sy" min="-2" max="2" step="0.1" value="1"><div class="value" id="syVal">1.0</div>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">矩阵相乘顺序：<br>投影 × 平移 × 旋转 × 缩放<br>（最右边的最先作用于顶点）</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>把平移、旋转、缩放统一为一个 3×3 矩阵，再与「像素→裁剪空间」的投影矩阵相乘，一次性应用到顶点。重点理解<strong>矩阵乘法顺序</strong>，以及 WGSL 中 <code>mat3x3f</code> 的列对齐内存布局。详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script>
+'use strict';
+
+// ---- 3x3 矩阵工具（列主序，9 元素）----
+const m3 = {
+  multiply(a, b) {
+    const out = new Array(9);
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        out[i*3+j] = a[0*3+j]*b[i*3+0] + a[1*3+j]*b[i*3+1] + a[2*3+j]*b[i*3+2];
+    return out;
+  },
+  projection: (w, h) => [2/w, 0, 0,  0, -2/h, 0,  -1, 1, 1],
+  translation: (tx, ty) => [1, 0, 0,  0, 1, 0,  tx, ty, 1],
+  rotation: (a) => { const c = Math.cos(a), s = Math.sin(a); return [c, s, 0,  -s, c, 0,  0, 0, 1]; },
+  scaling: (sx, sy) => [sx, 0, 0,  0, sy, 0,  0, 0, 1],
+};
+
+const shaderCode = /* wgsl */`
+  struct Uniforms { matrix : mat3x3f };
+  @group(0) @binding(0) var<uniform> u : Uniforms;
+
+  @vertex
+  fn vs(@location(0) pos : vec2f) -> @builtin(position) vec4f {
+    let clip = u.matrix * vec3f(pos, 1.0);  // 一次矩阵乘法完成所有变换
+    return vec4f(clip.xy, 0.0, 1.0);
+  }
+  @fragment
+  fn fs() -> @location(0) vec4f { return vec4f(1.0, 0.43, 0.78, 1.0); }
+`;
+
+const F = new Float32Array([
+  0,0,  30,0,  0,150,   0,150, 30,0, 30,150,
+  30,0, 100,0, 30,30,   30,30, 100,0, 100,30,
+  30,60, 67,60, 30,90,  30,90, 67,60, 67,90,
+]);
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  const vertexBuffer = device.createBuffer({ size: F.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vertexBuffer, 0, F);
+
+  // mat3x3f 在 uniform 里每列对齐到 16 字节 → 3 列 × 16 = 48 字节
+  const uniformBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs',
+      buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+  });
+
+  const state = { tx: 250, ty: 150, ang: 20, sx: 1, sy: 1 };
+  const padded = new Float32Array(12); // 48 字节
+
+  function render() {
+    const rad = state.ang * Math.PI / 180;
+    // 组合：投影 × 平移 × 旋转 × 缩放
+    let mat = m3.projection(canvas.width, canvas.height);
+    mat = m3.multiply(mat, m3.translation(state.tx, state.ty));
+    mat = m3.multiply(mat, m3.rotation(rad));
+    mat = m3.multiply(mat, m3.scaling(state.sx, state.sy));
+
+    // 9 元素 → 列对齐成 12 元素（每列补 1 个 pad）
+    padded[0]=mat[0]; padded[1]=mat[1]; padded[2]=mat[2];
+    padded[4]=mat[3]; padded[5]=mat[4]; padded[6]=mat[5];
+    padded[8]=mat[6]; padded[9]=mat[7]; padded[10]=mat[8];
+    device.queue.writeBuffer(uniformBuffer, 0, padded);
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: context.getCurrentTexture().createView(),
+        clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 },
+        loadOp: 'clear', storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(F.length / 2);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  function bind(id, valId, key, fmt) {
+    const el = document.getElementById(id), valEl = document.getElementById(valId);
+    el.addEventListener('input', () => { state[key] = +el.value; valEl.textContent = fmt(el.value); render(); });
+  }
+  bind('tx','txVal','tx', v=>v);
+  bind('ty','tyVal','ty', v=>v);
+  bind('ang','angVal','ang', v=>v+'°');
+  bind('sx','sxVal','sx', v=>(+v).toFixed(1));
+  bind('sy','syVal','sy', v=>(+v).toFixed(1));
+  render();
+}
+main();
+</script>
+</body>
+</html>

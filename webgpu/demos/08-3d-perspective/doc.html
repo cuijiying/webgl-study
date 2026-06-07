@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 08 三维透视投影</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../07-3d-orthographic/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>08 · 三维透视投影 —— 近大远小</h1>
+  <p class="subtitle">理解透视除法、FOV、宽高比、近远裁面。</p>
+
+  <h2>一、透视的本质：除以 w</h2>
+  <p>透视投影矩阵会把顶点的 z 信息写进裁剪坐标的 <strong>w 分量</strong>。GPU 在裁剪后会自动执行<strong>透视除法</strong>：<code>(x, y, z) ← (x/w, y/w, z/w)</code>。离相机越远（w 越大），坐标被缩得越小——这就是「近大远小」。</p>
+  <pre><code>perspective(fovY, aspect, near, far) = 
+[ f/aspect, 0,  0,            0,
+  0,        f,  0,            0,
+  0,        0,  far·nf,      -1,   <span class="tc">// 注意这里的 -1</span>
+  0,        0,  near·far·nf,  0 ]
+其中 f = 1/tan(fovY/2),  nf = 1/(near-far)</code></pre>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>第 3 列第 4 行的 <code>-1</code> 会把 <code>-z</code> 放进 w，于是 <code>w = -z</code>。又因为相机看向 <code>-z</code> 方向，物体的 z 是负值，w 就变成正的距离。深度项 <code>far·nf</code> / <code>near·far·nf</code> 按 WebGPU 的 <strong>[0,1]</strong> 深度范围设计（与 WebGL [-1,1] 不同）。</p>
+  </div>
+
+  <h2>二、三个关键参数</h2>
+  <table>
+    <tr><th>参数</th><th>含义</th><th>调大效果</th></tr>
+    <tr><td>FOV（视野角）</td><td>垂直方向能看到的角度</td><td>视野变广、透视更夸张（鱼眼感）</td></tr>
+    <tr><td>aspect（宽高比）</td><td>canvas 宽 / 高</td><td>防止画面横向或纵向拉伸</td></tr>
+    <tr><td>near / far</td><td>近/远裁剪面距离</td><td>可见深度范围；比值过大会有 Z-fighting</td></tr>
+  </table>
+  <div class="callout note">
+    <p><span class="ic">📷</span>小 FOV ≈ 长焦镜头（压缩空间），大 FOV ≈ 广角镜头（夸张近大远小）。游戏里常用 45°~75°。</p>
+  </div>
+
+  <h2>三、把物体推到相机前方</h2>
+  <p>相机默认在原点看向 <code>-z</code>。F 也在原点，会「贴脸」甚至被近裁面切掉。所以要先把它沿 -z 平移一段距离：</p>
+  <pre><code><span class="tk">let</span> m = mat4.<span class="tf">multiply</span>(proj, mat4.<span class="tf">translation</span>(<span class="tn">0</span>, <span class="tn">0</span>, -dist));
+m = mat4.<span class="tf">multiply</span>(m, mat4.<span class="tf">rotationY</span>(ry));</code></pre>
+  <p>拖动「距离」滑块，会看到 F 随距离变小/变大——这是正射投影做不到的效果。</p>
+
+  <h2>四、Z-fighting 与 near/far</h2>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>深度缓冲精度有限，且透视投影下深度<strong>非线性</strong>（绝大部分精度集中在近处）。如果 <code>near</code> 设得过小（如 0.001）、<code>far</code> 过大（如 100000），远处物体的深度会因精度不足而「闪烁打架」（Z-fighting）。经验法则：<strong>near 尽量大、far 尽量小</strong>，够用即可。本例用 <code>near=1, far=2000</code>。</p>
+  </div>
+
+  <h2>五、与正射投影的对比</h2>
+  <ul>
+    <li><strong>正射</strong>：平行投影，无 w 除法，远近等大；矩阵第 4 行是 <code>(0,0,0,1)</code>。</li>
+    <li><strong>透视</strong>：有 w 除法，远近不等大；矩阵第 4 行含 <code>-1</code>。</li>
+  </ul>
+
+  <h2>六、动手练习</h2>
+  <ol>
+    <li>同时改变 FOV 和距离，让 F 屏幕大小不变但透视感变化（电影里的「滑动变焦/眩晕镜头」）。</li>
+    <li>把 near 改成 300，观察 F 前半部分被近裁面切掉。</li>
+    <li>加一个绕 X 轴旋转，从上往下俯视 F。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../07-3d-orthographic/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../09-3d-camera/index.html">下一节：09 三维相机 →</a>
+  </div>
+</article>
+</body>
+</html>

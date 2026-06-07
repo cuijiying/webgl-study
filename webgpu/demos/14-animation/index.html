@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 14 - 动画</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>14 - 动画 (requestAnimationFrame)</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>旋转速度 (°/秒)</label><input type="range" id="speed" min="0" max="360" value="90"><div class="value" id="speedVal">90</div>
+      </div>
+      <div class="control-group">
+        <label>物体数量</label><input type="range" id="count" min="1" max="36" value="9"><div class="value" id="countVal">9</div>
+      </div>
+      <div class="control-group">
+        <button id="toggle" style="width:100%;padding:8px;background:#ff6ec7;border:none;border-radius:6px;color:#1a1a2e;font-weight:700;cursor:pointer;">⏸ 暂停</button>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">用 <code>requestAnimationFrame</code> 驱动渲染循环，并用 <strong>deltaTime</strong> 让速度与帧率无关。</p>
+        <p>当前 FPS: <strong id="fps">--</strong></p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>动画的本质是<strong>每一帧重新绘制</strong>。我们用浏览器的 <code>requestAnimationFrame</code> 在每次刷新前回调，根据<strong>两帧之间的时间差 deltaTime</strong> 更新旋转角度。这样无论显示器是 60Hz 还是 144Hz，物体转动的速度都一致。详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script src="../../js/geometry.js"></script>
+<script>
+'use strict';
+const mat4 = WebGPUUtils.mat4;
+const MAX = 36, STRIDE = 256;
+
+const shaderCode = /* wgsl */`
+  struct Obj { matrix : mat4x4f, color : vec4f };
+  @group(0) @binding(0) var<uniform> obj : Obj;
+  struct VSOut { @builtin(position) position : vec4f, @location(0) shade : f32 };
+  @vertex
+  fn vs(@location(0) pos : vec3f, @location(2) normal : vec3f) -> VSOut {
+    var o : VSOut;
+    o.position = obj.matrix * vec4f(pos, 1.0);
+    let n = normalize(normal);
+    o.shade = 0.4 + 0.6 * max(dot(n, normalize(vec3f(0.3, 0.5, 1.0))), 0.0);
+    return o;
+  }
+  @fragment
+  fn fs(in : VSOut) -> @location(0) vec4f { return vec4f(obj.color.rgb * in.shade, 1.0); }
+`;
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try { ({ device, context, format } = await WebGPUUtils.init(canvas)); }
+  catch (e) { WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message); return; }
+
+  const data = Geometry.interleaved();
+  const vertexBuffer = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vertexBuffer, 0, data);
+  const depthTexture = device.createTexture({ size: [canvas.width, canvas.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+  const uniformBuffer = device.createBuffer({ size: MAX * STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+  const bgl = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true } }] });
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: pipelineLayout,
+    vertex: { module, entryPoint: 'vs', buffers: [{ arrayStride: 9 * 4, attributes: [
+      { shaderLocation: 0, offset: 0, format: 'float32x3' },
+      { shaderLocation: 2, offset: 24, format: 'float32x3' },
+    ]}] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+  });
+  const bindGroup = device.createBindGroup({ layout: bgl, entries: [{ binding: 0, resource: { buffer: uniformBuffer, offset: 0, size: 80 } }] });
+
+  const palette = [[1,0.43,0.78],[0.55,0.8,1],[1,0.85,0.4],[0.5,1,0.6],[0.8,0.5,1],[1,0.6,0.4]];
+  const big = new Float32Array(MAX * STRIDE / 4);
+  const state = { speed: 90, count: 9, running: true };
+  let angle = 0;       // 累计旋转角度（弧度）
+  let last = 0;        // 上一帧时间戳
+  let fpsAcc = 0, fpsCount = 0;
+
+  function drawFrame(now) {
+    // ---- deltaTime（秒）----
+    if (!last) last = now;
+    const dt = (now - last) / 1000;
+    last = now;
+
+    // FPS 统计
+    fpsAcc += dt; fpsCount++;
+    if (fpsAcc >= 0.5) { document.getElementById('fps').textContent = Math.round(fpsCount / fpsAcc); fpsAcc = 0; fpsCount = 0; }
+
+    if (state.running) angle += (state.speed * Math.PI / 180) * dt;
+
+    const aspect = canvas.width / canvas.height;
+    const proj = mat4.perspective(60 * Math.PI / 180, aspect, 1, 4000);
+    const view = mat4.lookAt([0, 250, 700], [0, 0, 0], [0, 1, 0]);
+    const viewProj = mat4.multiply(proj, view);
+
+    const n = state.count;
+    const cols = Math.ceil(Math.sqrt(n)), spacing = 200;
+    for (let i = 0; i < n; i++) {
+      const gx = (i % cols) - (cols - 1) / 2;
+      const gz = Math.floor(i / cols) - (cols - 1) / 2;
+      let model = mat4.translation(gx * spacing, 0, gz * spacing);
+      model = mat4.multiply(model, mat4.rotationY(angle + i * 0.4));
+      const mvp = mat4.multiply(viewProj, model);
+      const base = i * (STRIDE / 4);
+      big.set(mvp, base);
+      const c = palette[i % palette.length];
+      big[base + 16] = c[0]; big[base + 17] = c[1]; big[base + 18] = c[2]; big[base + 19] = 1;
+    }
+    device.queue.writeBuffer(uniformBuffer, 0, big, 0, n * (STRIDE / 4));
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: context.getCurrentTexture().createView(), clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 }, loadOp: 'clear', storeOp: 'store' }],
+      depthStencilAttachment: { view: depthTexture.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store' },
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    for (let i = 0; i < n; i++) { pass.setBindGroup(0, bindGroup, [i * STRIDE]); pass.draw(Geometry.vertexCount); }
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+
+    requestAnimationFrame(drawFrame); // ← 申请下一帧
+  }
+
+  document.getElementById('speed').addEventListener('input', e => { state.speed = +e.target.value; document.getElementById('speedVal').textContent = e.target.value; });
+  document.getElementById('count').addEventListener('input', e => { state.count = +e.target.value; document.getElementById('countVal').textContent = e.target.value; });
+  document.getElementById('toggle').addEventListener('click', e => {
+    state.running = !state.running;
+    e.target.textContent = state.running ? '⏸ 暂停' : '▶ 播放';
+    last = 0; // 恢复时重置时间避免跳变
+  });
+
+  requestAnimationFrame(drawFrame);
+}
+main();
+</script>
+</body>
+</html>

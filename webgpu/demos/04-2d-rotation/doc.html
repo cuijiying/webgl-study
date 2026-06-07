@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 04 二维旋转</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../03-2d-translation/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>04 · 二维旋转 —— sin / cos 的魔法</h1>
+  <p class="subtitle">从几何角度推导二维旋转公式，并在 WGSL 中实现。</p>
+
+  <h2>一、旋转公式从哪来？</h2>
+  <p>把点 <code>(x, y)</code> 绕原点逆时针旋转角度 θ，新坐标为：</p>
+  <p>$$x' = x\cos\theta - y\sin\theta$$ $$y' = x\sin\theta + y\cos\theta$$</p>
+  <p>推导思路：用极坐标表示点 <code>(x,y) = (r·cosφ, r·sinφ)</code>，旋转后角度变为 <code>φ+θ</code>，再用和角公式展开 <code>cos(φ+θ)</code>、<code>sin(φ+θ)</code> 即得上式。</p>
+  <div class="callout note">
+    <p><span class="ic">📐</span>本质上这就是二维旋转矩阵：</p>
+    <p>$$\begin{bmatrix}x'\\y'\end{bmatrix}=\begin{bmatrix}\cos\theta&-\sin\theta\\\sin\theta&\cos\theta\end{bmatrix}\begin{bmatrix}x\\y\end{bmatrix}$$</p>
+    <p>第 06 节会把它升级为矩阵形式。</p>
+  </div>
+
+  <h2>二、为什么把 sin/cos 在 JS 里算好？</h2>
+  <p>三角函数对所有顶点都一样，是典型的 uniform。我们在 JS 里算一次 <code>Math.sin/cos</code>，作为 <code>vec2f rotation = (sin, cos)</code> 传入，避免 GPU 上每个顶点重复计算，也方便理解。</p>
+  <pre><code><span class="tk">const</span> rad = angle * Math.PI / <span class="tn">180</span>;
+uniformData[<span class="tn">4</span>] = Math.<span class="tf">sin</span>(rad);  <span class="tc">// rotation.x</span>
+uniformData[<span class="tn">5</span>] = Math.<span class="tf">cos</span>(rad);  <span class="tc">// rotation.y</span></code></pre>
+
+  <h2>三、WGSL 实现</h2>
+  <pre><code><span class="tk">let</span> rotated = <span class="tf">vec2f</span>(
+  pos.x * u.rotation.y - pos.y * u.rotation.x,  <span class="tc">// x·cos − y·sin</span>
+  pos.x * u.rotation.x + pos.y * u.rotation.y,  <span class="tc">// x·sin + y·cos</span>
+);
+<span class="tk">let</span> moved = rotated + u.translation;</code></pre>
+  <p>注意<strong>顺序：先旋转，后平移</strong>。因为旋转是绕原点进行的，如果先平移会让旋转中心也跟着移动，效果完全不同（下一节缩放、第 06 节矩阵会反复强调这点）。</p>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>本例 F 绕它的<strong>局部原点（左上角）</strong>旋转，所以看起来像「甩」出去。若想绕几何中心旋转，需先把顶点平移 <code>-(宽/2, 高/2)</code>，旋转后再平移回来。</p>
+  </div>
+
+  <h2>四、Uniform 内存布局</h2>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>字节偏移</th></tr>
+    <tr><td>resolution</td><td>vec2f</td><td>0</td></tr>
+    <tr><td>translation</td><td>vec2f</td><td>8</td></tr>
+    <tr><td>rotation</td><td>vec2f</td><td>16</td></tr>
+  </table>
+  <p>三个 vec2f 共 24 字节。由于 uniform buffer 推荐按 16 字节对齐，我们直接分配 32 字节（<code>Float32Array(8)</code>），多出的部分不使用即可。</p>
+
+  <h2>五、动手练习</h2>
+  <ol>
+    <li>让 F 绕<strong>自身中心</strong>旋转（提示：几何顶点先减去 <code>(50, 75)</code>）。</li>
+    <li>把角度做成自动旋转动画（用 <code>requestAnimationFrame</code>，参考第 14 节）。</li>
+    <li>直接在 WGSL 里接收角度 <code>f32</code>，用内置 <code>sin()/cos()</code> 计算，对比两种写法。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../03-2d-translation/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../05-2d-scale/index.html">下一节：05 二维缩放 →</a>
+  </div>
+</article>
+</body>
+</html>

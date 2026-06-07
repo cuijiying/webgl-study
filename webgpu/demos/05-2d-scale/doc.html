@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 05 二维缩放</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../04-2d-rotation/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>05 · 二维缩放 —— 乘法与镜像</h1>
+  <p class="subtitle">理解缩放变换，以及负缩放因子带来的镜像翻转。</p>
+
+  <h2>一、缩放公式</h2>
+  <p>缩放就是把坐标乘以缩放因子：</p>
+  <p>$$x' = x \cdot s_x \qquad y' = y \cdot s_y$$</p>
+  <p>在 WGSL 里利用向量逐分量乘法一行搞定：</p>
+  <pre><code><span class="tk">let</span> scaled = pos * u.scale;  <span class="tc">// vec2f * vec2f 逐分量相乘</span></code></pre>
+
+  <h2>二、负缩放 = 镜像</h2>
+  <div class="callout note">
+    <p><span class="ic">🪞</span>当 <code>scaleX = -1</code> 时，所有点的 x 坐标取反，图形沿 Y 轴<strong>左右翻转</strong>；<code>scaleY = -1</code> 则沿 X 轴上下翻转。两者同时为 -1 等价于旋转 180°。</p>
+  </div>
+  <p>试试在 Demo 里把缩放 X 拖到 -1，会看到 F 变成镜像的 "ꟻ"。</p>
+
+  <h2>三、变换顺序：先缩放后平移</h2>
+  <p>本例着色器顺序是 <strong>缩放 → 平移</strong>：</p>
+  <pre><code><span class="tk">let</span> scaled = pos * u.scale;
+<span class="tk">let</span> moved = scaled + u.translation;</code></pre>
+  <p>如果反过来「先平移后缩放」，平移量本身也会被放大，物体会跑到意想不到的位置。缩放和旋转一样，都是绕原点进行的，所以通常先做缩放/旋转、再做平移。</p>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>这正是接下来第 06 节要解决的核心问题：当变换越来越多，手动控制顺序很麻烦，<strong>矩阵</strong>能把任意顺序的变换优雅地组合起来。</p>
+  </div>
+
+  <h2>四、缩放对几何中心的影响</h2>
+  <p>和旋转一样，缩放也以原点为中心。F 的原点在左上角，所以放大时它会向右下「长大」，而不是从中心均匀膨胀。要从中心缩放，需先把几何平移到原点对齐中心。</p>
+
+  <h2>五、动手练习</h2>
+  <ol>
+    <li>把缩放范围扩大到 -3~3，观察大幅镜像与拉伸。</li>
+    <li>让 F 从自身中心缩放（先减 <code>(50,75)</code> 再缩放再加回）。</li>
+    <li>把缩放、旋转、平移三个变换全部加进同一个着色器，体会手动管理顺序的复杂度——然后进入第 06 节用矩阵简化它。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../04-2d-rotation/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../06-2d-matrices/index.html">下一节：06 二维矩阵 →</a>
+  </div>
+</article>
+</body>
+</html>

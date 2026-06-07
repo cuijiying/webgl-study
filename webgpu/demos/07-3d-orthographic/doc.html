@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 07 三维正射投影</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../06-2d-matrices/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>07 · 三维正射投影 —— 进入 3D 与深度测试</h1>
+  <p class="subtitle">绘制有厚度的 3D F，掌握 mat4x4、深度纹理，以及 WebGPU 的 [0,1] 深度范围。</p>
+
+  <h2>一、从 2D 到 3D 改了什么？</h2>
+  <ul>
+    <li>顶点从 <code>vec2f</code> 变 <code>vec3f</code>（多了 z）。</li>
+    <li>矩阵从 3×3 升级为 <code>mat4x4f</code>（64 字节连续，<strong>无对齐烦恼</strong>）。</li>
+    <li>新增<strong>深度纹理 (Depth Texture)</strong> 与深度测试，解决「谁遮挡谁」。</li>
+    <li>几何来自 <code>geometry.js</code>，每个顶点含位置、颜色、法线（法线本节先不用）。</li>
+  </ul>
+
+  <h2>二、正射投影 vs 透视投影</h2>
+  <p><strong>正射投影 (Orthographic)</strong> 不考虑距离，远近物体一样大，常用于工程制图、2D 游戏、UI。它把一个长方体空间线性映射到裁剪空间：</p>
+  <pre><code>proj = mat4.<span class="tf">orthographic</span>(left, right, bottom, top, near, far);</code></pre>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span><strong>WebGPU 的深度范围是 [0, 1]</strong>，而 WebGL 是 [-1, 1]。这意味着投影矩阵的第三行/列算法不同！如果直接套用 WebGL 教程的矩阵公式，深度会出错。本教程的 <code>WebGPUUtils.mat4</code> 已按 WebGPU 规范实现，放心使用。</p>
+  </div>
+
+  <h2>三、深度测试三件套</h2>
+  <h3>1) 创建深度纹理</h3>
+  <pre><code><span class="tk">const</span> depthTexture = device.<span class="tf">createTexture</span>({
+  size: [canvas.width, canvas.height],
+  format: <span class="ts">'depth24plus'</span>,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT,
+});</code></pre>
+  <p>深度纹理与画布同尺寸，每个像素存一个深度值（0=最近，1=最远）。</p>
+
+  <h3>2) 管线声明 depthStencil</h3>
+  <pre><code>depthStencil: {
+  format: <span class="ts">'depth24plus'</span>,
+  depthWriteEnabled: <span class="tk">true</span>,   <span class="tc">// 通过测试就写入新深度</span>
+  depthCompare: <span class="ts">'less'</span>,        <span class="tc">// 新深度 < 旧深度 才通过（更近者胜）</span>
+}</code></pre>
+
+  <h3>3) 渲染通道挂上深度附件</h3>
+  <pre><code>depthStencilAttachment: {
+  view: depthTexture.<span class="tf">createView</span>(),
+  depthClearValue: <span class="tn">1.0</span>,      <span class="tc">// 每帧先把深度清成最远</span>
+  depthLoadOp: <span class="ts">'clear'</span>,
+  depthStoreOp: <span class="ts">'store'</span>,
+}</code></pre>
+  <div class="callout note">
+    <p><span class="ic">🧠</span><strong>深度测试原理：</strong>光栅化每个像素时，GPU 拿它的 z 和深度纹理里已有的值比较。<code>depthCompare:'less'</code> 表示只有更近（z 更小）的片元才被画上去并更新深度。这样无论三角形提交顺序如何，最终都正确遮挡。这就是著名的 <strong>Z-Buffer 算法</strong>。</p>
+  </div>
+
+  <h2>四、关于背面剔除（Culling）</h2>
+  <p>本例 <code>cullMode:'none'</code>，所有面都画。生产中常用 <code>cullMode:'back'</code> 剔除背对相机的面以省一半绘制量，但需保证三角形<strong>缠绕方向 (winding)</strong> 一致。WebGPU 默认 <code>frontFace:'ccw'</code>（逆时针为正面）。若开启剔除后物体「破面」，多半是缠绕方向不符，把 <code>cullMode</code> 改 <code>'front'</code> 或调整顶点顺序即可。</p>
+
+  <h2>五、矩阵组合</h2>
+  <pre><code><span class="tk">let</span> m = mat4.<span class="tf">multiply</span>(proj, mat4.<span class="tf">rotationX</span>(rx));
+m = mat4.<span class="tf">multiply</span>(m, mat4.<span class="tf">rotationY</span>(ry));</code></pre>
+  <p>顺序仍是「最右最先」：顶点先绕 Y、再绕 X、最后投影。几何已在 <code>geometry.js</code> 里居中（减去 50,75,15），所以旋转绕物体中心进行。</p>
+
+  <h2>六、动手练习</h2>
+  <ol>
+    <li>把 <code>depthCompare</code> 改成 <code>'always'</code>，观察深度测试失效后 F「穿帮」的样子。</li>
+    <li>开启 <code>cullMode:'back'</code>，若破面就改成 <code>'front'</code>，理解缠绕方向。</li>
+    <li>把正射换成「歪斜」的投影体，观察图形被拉伸。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../06-2d-matrices/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../08-3d-perspective/index.html">下一节：08 三维透视投影 →</a>
+  </div>
+</article>
+</body>
+</html>

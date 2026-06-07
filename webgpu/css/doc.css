@@ -1,0 +1,169 @@
+/* ===== WebGPU 文档页样式 ===== */
+
+/* 顶部品牌色（WebGPU 用紫红渐变区分于 WebGL 的蓝色） */
+:root {
+  --wgpu-accent: #ff6ec7;
+  --wgpu-accent2: #b388ff;
+}
+
+/* Hero 渐变改色 */
+.hero.wgpu {
+  background: linear-gradient(135deg, #1a0a2e 0%, #2e1a3e 100%);
+}
+.hero.wgpu h1 { color: var(--wgpu-accent); }
+
+.chapter.wgpu h2 {
+  color: var(--wgpu-accent);
+  border-left-color: var(--wgpu-accent);
+}
+.demo-card.wgpu .num { background: var(--wgpu-accent); }
+.demo-card.wgpu:hover {
+  border-color: var(--wgpu-accent);
+  box-shadow: 0 4px 20px rgba(255,110,199,0.18);
+}
+
+/* ===== 文档文章页 ===== */
+.doc-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+.doc-page h1 {
+  font-size: 2rem;
+  color: var(--wgpu-accent);
+  margin: 32px 0 8px;
+}
+.doc-page .subtitle {
+  color: #90a4ae;
+  font-size: 1.05rem;
+  margin-bottom: 24px;
+}
+.doc-page h2 {
+  font-size: 1.5rem;
+  color: var(--wgpu-accent2);
+  margin: 36px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #2a2a4a;
+}
+.doc-page h3 {
+  font-size: 1.15rem;
+  color: #80cbc4;
+  margin: 24px 0 10px;
+}
+.doc-page p {
+  line-height: 1.85;
+  color: #c5cdd4;
+  margin-bottom: 14px;
+}
+.doc-page ul, .doc-page ol {
+  margin: 0 0 16px 24px;
+  line-height: 1.85;
+  color: #c5cdd4;
+}
+.doc-page li { margin-bottom: 6px; }
+.doc-page a { color: var(--wgpu-accent); }
+.doc-page strong { color: #fff; }
+
+.doc-page code {
+  background: #1a1a3a;
+  padding: 2px 7px;
+  border-radius: 4px;
+  color: #80cbc4;
+  font-size: 0.9em;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+}
+.doc-page pre {
+  background: #0d0d22;
+  border: 1px solid #2a2a4a;
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin-bottom: 18px;
+  line-height: 1.6;
+}
+.doc-page pre code {
+  background: none;
+  padding: 0;
+  color: #d4d4e8;
+  font-size: 0.88rem;
+}
+/* 简单语法高亮 token 类 */
+.doc-page .tk { color: #c792ea; }   /* 关键字 */
+.doc-page .ts { color: #c3e88d; }   /* 字符串 */
+.doc-page .tc { color: #546e7a; font-style: italic; } /* 注释 */
+.doc-page .tf { color: #82aaff; }   /* 函数/类型 */
+.doc-page .tn { color: #f78c6c; }   /* 数字 */
+
+/* 提示框 */
+.callout {
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 18px 0;
+  border-left: 4px solid;
+  line-height: 1.75;
+}
+.callout p { margin-bottom: 6px; }
+.callout p:last-child { margin-bottom: 0; }
+.callout.tip   { background: #0d2a22; border-color: #26a69a; }
+.callout.warn  { background: #2a210d; border-color: #ffab40; }
+.callout.note  { background: #1a0d2a; border-color: var(--wgpu-accent2); }
+.callout .ic { font-weight: bold; margin-right: 6px; }
+
+/* 文档内导航条 */
+.doc-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
+  background: #0e0e24;
+  border-bottom: 1px solid #2a2a4a;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.doc-nav a { color: var(--wgpu-accent); text-decoration: none; font-size: 0.9rem; }
+.doc-nav a:hover { text-decoration: underline; }
+.doc-nav .spacer { flex: 1; }
+.doc-nav .live-btn {
+  background: var(--wgpu-accent);
+  color: #1a0a2e;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: bold;
+}
+
+/* 表格 */
+.doc-page table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 18px;
+  font-size: 0.9rem;
+}
+.doc-page th, .doc-page td {
+  border: 1px solid #2a2a4a;
+  padding: 8px 12px;
+  text-align: left;
+}
+.doc-page th { background: #161630; color: var(--wgpu-accent2); }
+
+/* demo 页里指向文档的按钮 */
+.doc-link-btn {
+  display: inline-block;
+  background: var(--wgpu-accent);
+  color: #1a0a2e;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: bold;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+/* WebGPU 不支持时的提示 */
+.no-webgpu {
+  color: #ff8a80;
+  background: #2a0d0d;
+  border: 1px solid #5a1a1a;
+  border-radius: 8px;
+  padding: 16px;
+  line-height: 1.7;
+}

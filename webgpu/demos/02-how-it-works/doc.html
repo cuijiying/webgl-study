@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 02 工作原理</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../01-hello-triangle/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>02 · 工作原理 —— 顶点缓冲与插值</h1>
+  <p class="subtitle">理解顶点缓冲区内存布局、inter-stage 变量，以及光栅化阶段的重心插值。</p>
+
+  <h2>一、本节目标</h2>
+  <ul>
+    <li>用 <code>createBuffer</code> + <code>writeBuffer</code> 把顶点数据上传到 GPU</li>
+    <li>用 <code>vertex.buffers</code> 描述「一个顶点在内存里长什么样」</li>
+    <li>理解 <code>@location</code> 在顶点输入、inter-stage、片元输出三处的不同含义</li>
+    <li>看懂 GPU 如何对三角形内部做颜色插值</li>
+  </ul>
+
+  <h2>二、渲染管线全貌</h2>
+  <pre><code>顶点缓冲(GPU内存)
+   │  按 arrayStride 切片，每片是一个顶点
+   ▼
+顶点着色器 vs()   逐顶点执行（本例 3 次）
+   │  输出 @builtin(position) + @location(0) color
+   ▼
+图元装配 + 光栅化   把三角形铺成像素，并对 location 变量插值 ★
+   │
+   ▼
+片元着色器 fs()   逐像素执行（成千上万次）
+   │  输出 @location(0) 颜色
+   ▼
+画布纹理</code></pre>
+  <div class="callout note">
+    <p><span class="ic">★</span><strong>插值发生在光栅化阶段</strong>：顶点着色器只跑 3 次，但三角形内部有成千上万个像素。每个像素的 <code>color</code> 是由三个顶点颜色按「重心坐标」加权得到的——离哪个顶点近，就更接近那个顶点的颜色。这就是渐变的来源。</p>
+  </div>
+
+  <h2>三、顶点数据与内存布局</h2>
+  <p>我们把位置和颜色<strong>交错（interleaved）</strong>存在同一个数组里：</p>
+  <pre><code><span class="tk">const</span> vertexData = <span class="tk">new</span> <span class="tf">Float32Array</span>([
+<span class="tc">// x     y      r    g    b    a</span>
+   <span class="tn">0.0</span>,  <span class="tn">0.5</span>,   <span class="tn">1.0</span>, <span class="tn">0.2</span>, <span class="tn">0.3</span>, <span class="tn">1.0</span>,  <span class="tc">// 顶点0</span>
+  <span class="tn">-0.5</span>, <span class="tn">-0.5</span>,   <span class="tn">0.2</span>, <span class="tn">1.0</span>, <span class="tn">0.4</span>, <span class="tn">1.0</span>,  <span class="tc">// 顶点1</span>
+   <span class="tn">0.5</span>, <span class="tn">-0.5</span>,   <span class="tn">0.3</span>, <span class="tn">0.5</span>, <span class="tn">1.0</span>, <span class="tn">1.0</span>,  <span class="tc">// 顶点2</span>
+]);</code></pre>
+  <p>创建缓冲区时必须声明<strong>用途 (usage)</strong>，WebGPU 据此分配最优内存：</p>
+  <pre><code><span class="tk">const</span> vertexBuffer = device.<span class="tf">createBuffer</span>({
+  size: vertexData.byteLength,
+  usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+});
+device.queue.<span class="tf">writeBuffer</span>(vertexBuffer, <span class="tn">0</span>, vertexData);</code></pre>
+  <ul>
+    <li><code>GPUBufferUsage.VERTEX</code>：作为顶点缓冲使用。</li>
+    <li><code>GPUBufferUsage.COPY_DST</code>：允许被 <code>writeBuffer</code> 写入（作为拷贝目标）。</li>
+    <li><code>writeBuffer(buffer, offset, data)</code> 是上传数据最简单的方式。</li>
+  </ul>
+
+  <h2>四、用 buffers 描述布局</h2>
+  <pre><code>buffers: [{
+  arrayStride: <span class="tn">6</span> * <span class="tn">4</span>,  <span class="tc">// 步长：每个顶点 6 个 f32 = 24 字节</span>
+  attributes: [
+    { shaderLocation: <span class="tn">0</span>, offset: <span class="tn">0</span>,   format: <span class="ts">'float32x2'</span> }, <span class="tc">// pos</span>
+    { shaderLocation: <span class="tn">1</span>, offset: <span class="tn">8</span>,   format: <span class="ts">'float32x4'</span> }, <span class="tc">// color</span>
+  ],
+}]</code></pre>
+  <table>
+    <tr><th>字段</th><th>含义</th></tr>
+    <tr><td><code>arrayStride</code></td><td>从一个顶点到下一个顶点跨多少字节</td></tr>
+    <tr><td><code>shaderLocation</code></td><td>对应 WGSL 里的 <code>@location(n)</code></td></tr>
+    <tr><td><code>offset</code></td><td>该属性在单个顶点内的字节偏移（颜色前面有 2 个 f32，故 = 8）</td></tr>
+    <tr><td><code>format</code></td><td>数据格式，<code>float32x2</code>=vec2f，<code>float32x4</code>=vec4f</td></tr>
+  </table>
+  <div class="callout tip">
+    <p><span class="ic">💡</span>这套描述等价于 WebGL 的 <code>vertexAttribPointer</code>，但 WebGPU 把它放进管线里一次定义好，运行时无需反复设置，更高效也更不易出错。</p>
+  </div>
+
+  <h2>五、WGSL 中的 @location 三种身份</h2>
+  <pre><code><span class="tk">struct</span> VSOut {
+  <span class="tk">@builtin</span>(position) position : vec4f,  <span class="tc">// 裁剪坐标（特殊）</span>
+  <span class="tk">@location</span>(0) color : vec4f,           <span class="tc">// inter-stage 变量</span>
+};
+
+<span class="tk">@vertex</span>
+<span class="tk">fn</span> <span class="tf">vs</span>(<span class="tk">@location</span>(0) pos: vec2f,        <span class="tc">// ← 顶点输入属性</span>
+       <span class="tk">@location</span>(1) color: vec4f) -> VSOut { ... }
+
+<span class="tk">@fragment</span>
+<span class="tk">fn</span> <span class="tf">fs</span>(in: VSOut) -> <span class="tk">@location</span>(0) vec4f { <span class="tc">// ← 颜色附件输出</span>
+  <span class="tk">return</span> in.color;
+}</code></pre>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>三处 <code>@location</code> 的编号空间是<strong>独立</strong>的：</p>
+    <ul>
+      <li>顶点函数参数上的 location ↔ JS 里的 <code>shaderLocation</code></li>
+      <li>VSOut 里的 location ↔ 顶点输出与片元输入之间的<strong>匹配</strong>（按编号配对）</li>
+      <li>片元返回值上的 location ↔ <code>colorAttachments</code> 的索引</li>
+    </ul>
+  </div>
+
+  <h2>六、绑定并绘制</h2>
+  <pre><code>pass.<span class="tf">setPipeline</span>(pipeline);
+pass.<span class="tf">setVertexBuffer</span>(<span class="tn">0</span>, vertexBuffer); <span class="tc">// slot 0 对应 buffers[0]</span>
+pass.<span class="tf">draw</span>(<span class="tn">3</span>);</code></pre>
+
+  <h2>七、动手练习</h2>
+  <ol>
+    <li>把三个顶点颜色都改成同一种，观察渐变消失。</li>
+    <li>在 inter-stage 变量上加 <code>@interpolate(flat)</code>，看看「平坦着色」效果（取最后一个顶点的颜色，不插值）。</li>
+    <li>把颜色单独放到第二个顶点缓冲区（slot 1），改用<strong>非交错</strong>布局。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../01-hello-triangle/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../03-2d-translation/index.html">下一节：03 二维平移 →</a>
+  </div>
+</article>
+</body>
+</html>

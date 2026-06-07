@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 13 绘制多个物体</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../12-textures/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>13 · 绘制多个物体 —— 动态 Uniform 偏移</h1>
+  <p class="subtitle">用一个大缓冲 + dynamic offset 高效绘制成百上千个物体。</p>
+
+  <h2>一、为什么需要它？</h2>
+  <p>在第 9 节（相机）里，我们为环上的每个 F 都建了<strong>独立的 uniform buffer 和 bind group</strong>。物体一多，这种做法就会有问题：</p>
+  <ul>
+    <li>创建大量 GPU 对象，浪费显存和初始化时间；</li>
+    <li>每帧若要更新它们，要发很多次 <code>writeBuffer</code>；</li>
+    <li>切换 bind group 本身也有开销。</li>
+  </ul>
+  <p>WebGPU 给出的方案是<strong>动态偏移 (dynamic offset)</strong>：把所有物体的 uniform 数据塞进<strong>同一个大 buffer</strong>，绘制每个物体前只用一个整数偏移量「跳」到它的数据段。</p>
+
+  <h2>二、内存布局：256 字节对齐</h2>
+  <p>动态偏移有个硬性规则：偏移量必须是 <code>minUniformBufferOffsetAlignment</code> 的整数倍，默认是 <strong>256 字节</strong>。所以即使每个物体只需 80 字节（一个 mat4x4f = 64 + 一个 vec4f = 16），我们也要按 256 字节为步长排列：</p>
+  <pre><code><span class="tc">// 每个物体占 256 字节槽位（其中前 80 字节是真实数据，其余是填充）</span>
+物体 0 → 偏移 0
+物体 1 → 偏移 256
+物体 2 → 偏移 512
+物体 i → 偏移 i * 256</code></pre>
+  <div class="callout note">
+    <p><span class="ic">📏</span>对齐值可以从 <code>adapter.limits.minUniformBufferOffsetAlignment</code> 读取。大多数设备是 256，少数是 64。写通用代码时应该读取而不是硬编码。</p>
+  </div>
+
+  <h2>三、声明带动态偏移的 Bind Group Layout</h2>
+  <p>关键点：<code>layout:'auto'</code> 生成的布局 <strong>不</strong> 支持动态偏移。必须手动创建 layout，并把 <code>hasDynamicOffset</code> 设为 <code>true</code>：</p>
+  <pre><code><span class="tk">const</span> bgl = device.<span class="tf">createBindGroupLayout</span>({
+  entries: [{
+    binding: 0,
+    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+    buffer: { type: <span class="ts">'uniform'</span>, hasDynamicOffset: <span class="tk">true</span> },  <span class="tc">// ← 关键</span>
+  }],
+});
+<span class="tk">const</span> pipelineLayout = device.<span class="tf">createPipelineLayout</span>({ bindGroupLayouts: [bgl] });</code></pre>
+  <p>然后管线用这个显式 layout，而不是 <code>'auto'</code>：</p>
+  <pre><code><span class="tk">const</span> pipeline = device.<span class="tf">createRenderPipeline</span>({
+  layout: pipelineLayout,   <span class="tc">// ← 不再是 'auto'</span>
+  <span class="tc">/* ...vertex / fragment... */</span>
+});</code></pre>
+
+  <h2>四、Bind Group 的 size = 单个物体大小</h2>
+  <p>创建 bind group 时，绑定的 <code>size</code> 不是整个大 buffer，而是<strong>单个物体的数据大小</strong>（这里 80 字节）。偏移留 0，运行时再传：</p>
+  <pre><code><span class="tk">const</span> bindGroup = device.<span class="tf">createBindGroup</span>({
+  layout: bgl,
+  entries: [{ binding: 0, resource: {
+    buffer: uniformBuffer,
+    offset: 0,
+    size: 80,   <span class="tc">// 一个 mat4x4f(64) + 一个 vec4f(16)</span>
+  }}],
+});</code></pre>
+
+  <h2>五、绘制循环：每个物体切换偏移</h2>
+  <pre><code>pass.<span class="tf">setPipeline</span>(pipeline);
+pass.<span class="tf">setVertexBuffer</span>(0, vertexBuffer);
+<span class="tk">for</span> (<span class="tk">let</span> i = 0; i &lt; n; i++) {
+  pass.<span class="tf">setBindGroup</span>(0, bindGroup, [i * 256]);  <span class="tc">// ← 第三参数是动态偏移数组</span>
+  pass.<span class="tf">draw</span>(vertexCount);
+}</code></pre>
+  <p>同一个 <code>bindGroup</code> 复用了 N 次，只靠偏移数组区分。注意第三个参数是<strong>数组</strong>——因为一个 bind group 里可以有多个动态资源，要按声明顺序一一对应。</p>
+
+  <h2>六、一次性写入所有数据</h2>
+  <p>每帧我们把全部物体的矩阵和颜色填进一个大 <code>Float32Array</code>，一次 <code>writeBuffer</code> 全部上传，比逐个上传高效得多：</p>
+  <pre><code><span class="tk">for</span> (<span class="tk">let</span> i = 0; i &lt; n; i++) {
+  <span class="tk">const</span> mvp = computeMatrix(i);
+  <span class="tk">const</span> base = i * (256 / 4);   <span class="tc">// 以 float 为单位的起始下标</span>
+  big.<span class="tf">set</span>(mvp, base);            <span class="tc">// 0..15: 矩阵</span>
+  big[base + 16] = r; big[base + 17] = g; big[base + 18] = b; big[base + 19] = 1; <span class="tc">// 颜色</span>
+}
+device.queue.<span class="tf">writeBuffer</span>(uniformBuffer, 0, big, 0, n * (256 / 4));</code></pre>
+
+  <h2>七、动态偏移 vs 其它方案</h2>
+  <table>
+    <tr><th>方案</th><th>优点</th><th>缺点</th></tr>
+    <tr><td>每物体独立 buffer/bg（第9节）</td><td>直观简单</td><td>物体多时浪费、慢</td></tr>
+    <tr><td><strong>动态偏移（本节）</strong></td><td>一个 buffer，切换便宜</td><td>需 256 对齐、手写 layout</td></tr>
+    <tr><td>Storage Buffer + 实例化</td><td>最高效，可上万物体</td><td>需 instance_index、稍复杂</td></tr>
+  </table>
+  <div class="callout tip">
+    <p><span class="ic">🚀</span>对于真正海量的物体（粒子、草地），更推荐 <strong>实例化绘制</strong>：<code>pass.draw(vertexCount, instanceCount)</code> 配合 storage buffer，用 <code>@builtin(instance_index)</code> 在着色器里索引每个实例的数据，一次 draw 调用画完所有物体。</p>
+  </div>
+
+  <h2>八、动手练习</h2>
+  <ol>
+    <li>把物体数量上限从 64 改成 256，观察是否仍流畅。</li>
+    <li>给每个物体加上不同的旋转动画（结合下一节）。</li>
+    <li>尝试用 <code>adapter.limits.minUniformBufferOffsetAlignment</code> 动态计算 STRIDE。</li>
+    <li>改用实例化绘制重写本例，对比代码量与性能。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../12-textures/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../14-animation/index.html">下一节：14 动画 →</a>
+  </div>
+</article>
+</body>
+</html>

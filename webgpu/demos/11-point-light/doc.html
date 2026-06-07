@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 11 点光源</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../10-directional-light/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>11 · 点光源与高光 —— Blinn-Phong 模型</h1>
+  <p class="subtitle">从方向光升级到有位置的点光源，并加入镜面高光。</p>
+
+  <h2>一、点光源 vs 方向光</h2>
+  <table>
+    <tr><th></th><th>方向光</th><th>点光源</th></tr>
+    <tr><td>是否有位置</td><td>否（无限远）</td><td>有具体世界坐标</td></tr>
+    <tr><td>光线方向</td><td>处处相同</td><td>逐表面点不同</td></tr>
+    <tr><td>计算关键</td><td>固定 lightDir</td><td><code>lightPos − 表面世界坐标</code></td></tr>
+  </table>
+  <p>所以点光源需要知道<strong>每个片元的世界坐标</strong>，才能算出该点指向光源的方向。这就要把模型矩阵也传进着色器，在顶点着色器里算世界坐标。</p>
+
+  <h2>二、三个关键方向向量</h2>
+  <pre><code><span class="tk">let</span> worldPos = (u.model * <span class="tf">vec4f</span>(pos, <span class="tn">1.0</span>)).xyz;
+o.surfaceToLight = u.lightPos - worldPos;  <span class="tc">// L：表面 → 光源</span>
+o.surfaceToView  = u.viewPos  - worldPos;  <span class="tc">// V：表面 → 相机</span>
+o.normal = (u.normalMatrix * <span class="tf">vec4f</span>(normal, <span class="tn">0.0</span>)).xyz;</code></pre>
+  <div class="callout note">
+    <p><span class="ic">📍</span>这些向量在顶点着色器算出后，会被光栅化<strong>插值</strong>到每个片元。片元着色器里再 <code>normalize</code>，因为插值会改变长度。</p>
+  </div>
+
+  <h2>三、漫反射 + 镜面高光</h2>
+  <h3>漫反射（同上一节）</h3>
+  <pre><code><span class="tk">let</span> diffuse = <span class="tf">max</span>(<span class="tf">dot</span>(n, L), <span class="tn">0.0</span>);</code></pre>
+
+  <h3>镜面高光（Blinn-Phong）</h3>
+  <p>当<strong>视线方向</strong>正好处在光线的「镜面反射」路径上时，会看到刺眼的高光。Blinn 的巧妙简化是引入<strong>半程向量 H</strong>（L 和 V 的平均方向）：</p>
+  <p>$$\vec{H} = \text{normalize}(\vec{L}+\vec{V}) \qquad specular = (\max(\vec{n}\cdot\vec{H},0))^{shininess}$$</p>
+  <pre><code><span class="tk">let</span> H = <span class="tf">normalize</span>(L + V);
+<span class="tk">var</span> specular = <span class="tn">0.0</span>;
+<span class="tk">if</span> (diffuse > <span class="tn">0.0</span>) {
+  specular = <span class="tf">pow</span>(<span class="tf">max</span>(<span class="tf">dot</span>(n, H), <span class="tn">0.0</span>), u.shininess);
+}</code></pre>
+  <div class="callout tip">
+    <p><span class="ic">✨</span><strong>shininess（光泽度）</strong>控制高光大小：值越大，高光越小越锐利（像抛光金属/塑料）；值越小，高光越大越柔和（像粗糙表面）。拖动滑块从 1 到 300 感受材质变化。</p>
+  </div>
+
+  <h2>四、最终颜色合成</h2>
+  <pre><code><span class="tk">let</span> rgb = in.color * (ambient + diffuse * <span class="tn">0.85</span>) + <span class="tf">vec3f</span>(specular);</code></pre>
+  <ul>
+    <li><strong>环境光 ambient</strong>：基础亮度，避免全黑。</li>
+    <li><strong>漫反射 diffuse</strong>：物体本色，受光照角度影响。</li>
+    <li><strong>镜面高光 specular</strong>：通常是<strong>白色</strong>叠加（与物体颜色无关），所以直接 <code>+ vec3f(specular)</code>。</li>
+  </ul>
+
+  <h2>五、相机世界坐标怎么来？</h2>
+  <p>本例相机固定在 <code>(0, 0, DIST)</code> 看向原点（视图矩阵是 <code>translation(0,0,-DIST)</code>）。所以 <code>viewPos = (0, 0, DIST)</code>。如果用了 lookAt，相机世界坐标就是 lookAt 里的 <code>eye</code>。</p>
+
+  <h2>六、Uniform 布局（256 字节）</h2>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>float 索引</th></tr>
+    <tr><td>mvp</td><td>mat4x4f</td><td>0–15</td></tr>
+    <tr><td>model</td><td>mat4x4f</td><td>16–31</td></tr>
+    <tr><td>normalMatrix</td><td>mat4x4f</td><td>32–47</td></tr>
+    <tr><td>lightPos</td><td>vec3f</td><td>48–50</td></tr>
+    <tr><td>viewPos</td><td>vec3f</td><td>52–54</td></tr>
+    <tr><td>color</td><td>vec4f</td><td>56–59</td></tr>
+    <tr><td>shininess</td><td>f32</td><td>60</td></tr>
+  </table>
+
+  <h2>七、动手练习</h2>
+  <ol>
+    <li>给点光源加<strong>距离衰减</strong>：亮度乘以 <code>1/(distance²)</code>，模拟真实光强随距离减弱。</li>
+    <li>把高光颜色改成光源颜色而非纯白。</li>
+    <li>让光源绕物体公转，观察高光点在表面移动。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../10-directional-light/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../12-textures/index.html">下一节：12 纹理贴图 →</a>
+  </div>
+</article>
+</body>
+</html>

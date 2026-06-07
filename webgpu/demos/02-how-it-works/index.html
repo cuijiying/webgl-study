@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 02 - 工作原理</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>02 - 工作原理：顶点缓冲与插值</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>💡 核心知识点</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>1. <code>createBuffer()</code> 创建顶点缓冲</p>
+        <p>2. <code>writeBuffer()</code> 上传数据</p>
+        <p>3. <code>vertex.buffers</code> 描述内存布局</p>
+        <p>4. <code>@location(n)</code> 绑定属性</p>
+        <p>5. inter-stage 变量自动插值</p>
+        <hr style="border-color:#2a2a4a; margin:12px 0;">
+        <p style="color:#ffab40;">三个顶点各给一种颜色（红/绿/蓝），GPU 在三角形内部对颜色做<strong>重心插值</strong>，于是出现渐变。</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>本节用真正的<strong>顶点缓冲区</strong>把「位置 + 颜色」一起传进着色器。每个顶点携带自己的颜色，顶点着色器把颜色通过 <code>@location</code> 传给片元着色器，光栅化阶段会对这些 inter-stage 变量做插值，从而得到平滑渐变。原理详解见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script>
+'use strict';
+
+const shaderCode = /* wgsl */`
+  struct VSOut {
+    @builtin(position) position : vec4f,
+    @location(0) color : vec4f,   // 传给片元着色器，会被插值
+  };
+
+  @vertex
+  fn vs(@location(0) pos : vec2f, @location(1) color : vec4f) -> VSOut {
+    var out : VSOut;
+    out.position = vec4f(pos, 0.0, 1.0);
+    out.color = color;
+    return out;
+  }
+
+  @fragment
+  fn fs(in : VSOut) -> @location(0) vec4f {
+    return in.color; // 收到的是被插值后的颜色
+  }
+`;
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  // 每个顶点：x, y, r, g, b, a —— 共 6 个 float
+  const vertexData = new Float32Array([
+  //  x      y      r    g    b    a
+     0.0,   0.5,   1.0, 0.2, 0.3, 1.0,  // 顶部 红
+    -0.5,  -0.5,   0.2, 1.0, 0.4, 1.0,  // 左下 绿
+     0.5,  -0.5,   0.3, 0.5, 1.0, 1.0,  // 右下 蓝
+  ]);
+
+  const vertexBuffer = device.createBuffer({
+    size: vertexData.byteLength,
+    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(vertexBuffer, 0, vertexData);
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: {
+      module, entryPoint: 'vs',
+      buffers: [{
+        arrayStride: 6 * 4, // 每个顶点 6 个 float = 24 字节
+        attributes: [
+          { shaderLocation: 0, offset: 0,     format: 'float32x2' }, // 位置
+          { shaderLocation: 1, offset: 2 * 4, format: 'float32x4' }, // 颜色
+        ],
+      }],
+    },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+
+  function render() {
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: context.getCurrentTexture().createView(),
+        clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 },
+        loadOp: 'clear', storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer); // 绑定顶点缓冲到 slot 0
+    pass.draw(3);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+  render();
+}
+main();
+</script>
+</body>
+</html>

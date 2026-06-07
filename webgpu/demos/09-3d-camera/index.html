@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 09 - 三维相机</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>09 - 三维相机 (lookAt)</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>相机环绕角度</label><input type="range" id="ang" min="0" max="360" value="0"><div class="value" id="angVal">0°</div>
+      </div>
+      <div class="control-group">
+        <label>相机高度</label><input type="range" id="height" min="-300" max="400" value="120"><div class="value" id="heightVal">120</div>
+      </div>
+      <div class="control-group">
+        <label>相机距离</label><input type="range" id="radius" min="200" max="900" value="500"><div class="value" id="radiusVal">500</div>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">5 个 F 围成一圈，相机始终"看着"圆心。视图矩阵 = lookAt 相机矩阵的逆。</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>本节实现可交互的 3D 相机。我们用 <code>lookAt(eye, target, up)</code> 构造相机的朝向，再取其逆得到<strong>视图矩阵 (View Matrix)</strong>。最终变换 = 投影 × 视图 × 模型。拖动滑块让相机围绕一圈 F 旋转观察。详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script src="../../js/geometry.js"></script>
+<script>
+'use strict';
+const mat4 = WebGPUUtils.mat4;
+
+const shaderCode = /* wgsl */`
+  struct Uniforms { matrix : mat4x4f };
+  @group(0) @binding(0) var<uniform> u : Uniforms;
+  struct VSOut { @builtin(position) position : vec4f, @location(0) color : vec3f };
+  @vertex
+  fn vs(@location(0) pos : vec3f, @location(1) color : vec3f) -> VSOut {
+    var o : VSOut;
+    o.position = u.matrix * vec4f(pos, 1.0);
+    o.color = color;
+    return o;
+  }
+  @fragment
+  fn fs(in : VSOut) -> @location(0) vec4f { return vec4f(in.color, 1.0); }
+`;
+
+const NUM_F = 5;
+const RING_RADIUS = 200;
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  const data = Geometry.interleaved();
+  const vertexBuffer = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vertexBuffer, 0, data);
+  const depthTexture = device.createTexture({ size: [canvas.width, canvas.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs',
+      buffers: [{ arrayStride: 9 * 4, attributes: [
+        { shaderLocation: 0, offset: 0, format: 'float32x3' },
+        { shaderLocation: 1, offset: 12, format: 'float32x3' },
+      ]}] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+  });
+
+  // 每个 F 一个 uniform buffer + bind group
+  const uniformBuffers = [];
+  const bindGroups = [];
+  for (let i = 0; i < NUM_F; i++) {
+    const ub = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    uniformBuffers.push(ub);
+    bindGroups.push(device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ub } }] }));
+  }
+
+  const state = { ang: 0, height: 120, radius: 500 };
+
+  function render() {
+    const aspect = canvas.width / canvas.height;
+    const proj = mat4.perspective(60 * Math.PI / 180, aspect, 1, 3000);
+
+    // 相机位置：绕 Y 轴环绕原点
+    const a = state.ang * Math.PI / 180;
+    const eye = [Math.sin(a) * state.radius, state.height, Math.cos(a) * state.radius];
+    const view = mat4.lookAt(eye, [0, 0, 0], [0, 1, 0]); // lookAt 直接给出视图矩阵
+    const viewProj = mat4.multiply(proj, view);
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: context.getCurrentTexture().createView(), clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 }, loadOp: 'clear', storeOp: 'store' }],
+      depthStencilAttachment: { view: depthTexture.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store' },
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+
+    for (let i = 0; i < NUM_F; i++) {
+      const fa = (i / NUM_F) * Math.PI * 2;
+      const model = mat4.translation(Math.sin(fa) * RING_RADIUS, 0, Math.cos(fa) * RING_RADIUS);
+      const m = mat4.multiply(viewProj, model);
+      device.queue.writeBuffer(uniformBuffers[i], 0, m);
+      pass.setBindGroup(0, bindGroups[i]);
+      pass.draw(Geometry.vertexCount);
+    }
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  function bind(id, valId, key, suffix='') {
+    const el = document.getElementById(id), valEl = document.getElementById(valId);
+    el.addEventListener('input', () => { state[key] = +el.value; valEl.textContent = el.value + suffix; render(); });
+  }
+  bind('ang','angVal','ang','°'); bind('height','heightVal','height'); bind('radius','radiusVal','radius');
+  render();
+}
+main();
+</script>
+</body>
+</html>

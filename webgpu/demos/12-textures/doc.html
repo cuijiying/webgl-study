@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 12 纹理贴图</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../11-point-light/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>12 · 纹理贴图 —— 把图片贴到表面</h1>
+  <p class="subtitle">掌握 GPUTexture、GPUSampler、UV 坐标与多资源 Bind Group。</p>
+
+  <h2>一、纹理是什么？</h2>
+  <p>纹理 (Texture) 就是一张存在 GPU 上的图片。我们用 <strong>UV 坐标</strong>（也叫纹理坐标）告诉每个顶点「采样图片的哪个位置」。UV 范围是 <code>0~1</code>：<code>(0,0)</code> 是图片一角，<code>(1,1)</code> 是对角。</p>
+
+  <h2>二、纹理三件套</h2>
+  <p>WebGPU 里用一张纹理需要三个对象，分别绑定到 bind group 的不同 binding：</p>
+  <table>
+    <tr><th>对象</th><th>WGSL 类型</th><th>作用</th></tr>
+    <tr><td>GPUTexture（的 view）</td><td><code>texture_2d&lt;f32&gt;</code></td><td>存储像素数据</td></tr>
+    <tr><td>GPUSampler</td><td><code>sampler</code></td><td>决定如何读取（过滤、寻址）</td></tr>
+    <tr><td>Uniform Buffer</td><td><code>var&lt;uniform&gt;</code></td><td>矩阵等参数</td></tr>
+  </table>
+  <pre><code><span class="tk">@group</span>(0) <span class="tk">@binding</span>(0) <span class="tk">var</span>&lt;uniform&gt; u : Uniforms;
+<span class="tk">@group</span>(0) <span class="tk">@binding</span>(1) <span class="tk">var</span> samp : sampler;
+<span class="tk">@group</span>(0) <span class="tk">@binding</span>(2) <span class="tk">var</span> tex : texture_2d&lt;f32&gt;;</code></pre>
+
+  <h2>三、创建纹理并上传图片</h2>
+  <pre><code><span class="tk">const</span> texture = device.<span class="tf">createTexture</span>({
+  size: [w, h],
+  format: <span class="ts">'rgba8unorm'</span>,
+  usage: GPUTextureUsage.TEXTURE_BINDING   <span class="tc">// 着色器可采样</span>
+       | GPUTextureUsage.COPY_DST          <span class="tc">// 可被写入</span>
+       | GPUTextureUsage.RENDER_ATTACHMENT,
+});
+device.queue.<span class="tf">copyExternalImageToTexture</span>(
+  { source: srcCanvas, flipY: <span class="tk">true</span> },  <span class="tc">// 来源：img / canvas / ImageBitmap</span>
+  { texture },
+  [w, h]
+);</code></pre>
+  <div class="callout note">
+    <p><span class="ic">🖼️</span>本例没有加载外部图片，而是用 2D Canvas <strong>程序生成</strong>了一张带渐变、棋盘格和文字的图，再作为 <code>source</code> 上传。实际项目中通常用 <code>const img = await createImageBitmap(await (await fetch(url)).blob())</code> 加载图片文件。</p>
+    <p><span class="ic">🔄</span><code>flipY:true</code>：图片坐标 Y 向下，而我们的 UV (0,0) 在左下，需翻转 Y 让图片正立。</p>
+  </div>
+
+  <h2>四、采样器：linear vs nearest</h2>
+  <pre><code><span class="tk">const</span> sampler = device.<span class="tf">createSampler</span>({
+  magFilter: <span class="ts">'linear'</span>,   <span class="tc">// 放大时的过滤</span>
+  minFilter: <span class="ts">'linear'</span>,   <span class="tc">// 缩小时的过滤</span>
+});</code></pre>
+  <table>
+    <tr><th>过滤</th><th>效果</th><th>适用</th></tr>
+    <tr><td><code>linear</code></td><td>相邻像素插值，平滑</td><td>照片、真实贴图</td></tr>
+    <tr><td><code>nearest</code></td><td>取最近像素，硬边/马赛克</td><td>像素艺术、色块图</td></tr>
+  </table>
+  <p>Demo 里切换下拉框，放大立方体表面就能看到两者区别。还有一个 <code>addressMode</code> 控制 UV 超出 0~1 时的行为（<code>repeat</code> 平铺 / <code>clamp-to-edge</code> 拉伸边缘 / <code>mirror-repeat</code> 镜像）。</p>
+
+  <h2>五、在着色器里采样</h2>
+  <pre><code><span class="tk">@fragment</span>
+<span class="tk">fn</span> <span class="tf">fs</span>(in : VSOut) -> <span class="tk">@location</span>(0) vec4f {
+  <span class="tk">return</span> <span class="tf">textureSample</span>(tex, samp, in.uv);
+}</code></pre>
+  <p><code>textureSample(纹理, 采样器, UV)</code> 返回该 UV 处的颜色。UV 由顶点着色器输出、经光栅化插值后传入。</p>
+
+  <h2>六、Bind Group 打包多种资源</h2>
+  <pre><code>device.<span class="tf">createBindGroup</span>({
+  layout: pipeline.<span class="tf">getBindGroupLayout</span>(<span class="tn">0</span>),
+  entries: [
+    { binding: <span class="tn">0</span>, resource: { buffer: uniformBuffer } },
+    { binding: <span class="tn">1</span>, resource: sampler },
+    { binding: <span class="tn">2</span>, resource: texture.<span class="tf">createView</span>() },
+  ],
+});</code></pre>
+  <p>一个 bind group 可以同时绑定 buffer、sampler、texture，<code>binding</code> 号与 WGSL 里一一对应。</p>
+
+  <h2>七、动手练习</h2>
+  <ol>
+    <li>把 UV 乘以 2（<code>in.uv * 2.0</code>）配合 <code>addressMode:'repeat'</code>，让纹理在每个面平铺 2×2。</li>
+    <li>加载一张真实图片文件替换程序纹理。</li>
+    <li>结合第 11 节，给纹理立方体加上点光源光照（纹理色 × 光照亮度）。</li>
+    <li>开启 mipmap（<code>generateMipmap</code>）减少远处纹理的闪烁。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../11-point-light/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../13-multiple-objects/index.html">下一节：13 绘制多个物体 →</a>
+  </div>
+</article>
+</body>
+</html>

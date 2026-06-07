@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 06 二维矩阵</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../05-2d-scale/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>06 · 二维矩阵 —— 用一个矩阵统一所有变换</h1>
+  <p class="subtitle">把平移、旋转、缩放、投影组合成单个 3×3 矩阵，并掌握 WGSL 中 mat3x3 的内存对齐。</p>
+
+  <h2>一、为什么要用矩阵？</h2>
+  <p>前几节里，每加一个变换就要在着色器里多写几行，而且<strong>顺序极易出错</strong>。矩阵的妙处在于：任意多个变换可以<strong>预先相乘成一个矩阵</strong>，着色器里只做一次矩阵 × 向量。</p>
+  <p>二维变换用 3×3 矩阵表示（把二维点扩展为 <code>(x, y, 1)</code> 的齐次坐标），这样平移也能用矩阵乘法表达。</p>
+
+  <h2>二、三种基本矩阵</h2>
+  <p>$$
+  T=\begin{bmatrix}1&0&t_x\\0&1&t_y\\0&0&1\end{bmatrix}\;
+  R=\begin{bmatrix}\cos&-\sin&0\\\sin&\cos&0\\0&0&1\end{bmatrix}\;
+  S=\begin{bmatrix}s_x&0&0\\0&s_y&0\\0&0&1\end{bmatrix}
+  $$</p>
+  <p>另外还有一个<strong>投影矩阵</strong>，负责把像素坐标变换到裁剪空间（含 Y 翻转）：</p>
+  <pre><code>projection(w, h) = [ 2/w, 0,    0,
+                     0,  -2/h,  0,
+                    -1,   1,    1 ]  <span class="tc">// 列主序</span></code></pre>
+
+  <h2>三、相乘顺序决定一切</h2>
+  <pre><code><span class="tk">let</span> mat = m3.<span class="tf">projection</span>(w, h);
+mat = m3.<span class="tf">multiply</span>(mat, m3.<span class="tf">translation</span>(tx, ty));
+mat = m3.<span class="tf">multiply</span>(mat, m3.<span class="tf">rotation</span>(rad));
+mat = m3.<span class="tf">multiply</span>(mat, m3.<span class="tf">scaling</span>(sx, sy));</code></pre>
+  <div class="callout note">
+    <p><span class="ic">🧮</span><strong>读法：最右边的矩阵最先作用于顶点。</strong>上面等价于：<code>顶点 → 缩放 → 旋转 → 平移 → 投影 → 屏幕</code>。这正是我们想要的「先缩放/旋转、后平移」的自然顺序。</p>
+  </div>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>矩阵乘法<strong>不满足交换律</strong>：<code>T·R ≠ R·T</code>。交换平移和旋转会得到完全不同的结果。试着在代码里交换两行，观察 F 的运动轨迹变化。</p>
+  </div>
+
+  <h2>四、WGSL mat3x3 的内存陷阱（核心知识点）</h2>
+  <p>这是 WebGPU 新手最常踩的坑。WGSL 的 <code>mat3x3f</code> 由 3 个<strong>列向量 vec3</strong> 构成，而每个 vec3 在内存里<strong>对齐到 16 字节</strong>（占 12 字节数据 + 4 字节填充）。所以一个 mat3x3 在 uniform 缓冲里实际占用 <strong>48 字节</strong>，而不是 9×4=36 字节。</p>
+  <table>
+    <tr><th>列</th><th>float 索引</th><th>字节偏移</th></tr>
+    <tr><td>第 0 列 (m0,m1,m2)</td><td>0,1,2 + pad</td><td>0</td></tr>
+    <tr><td>第 1 列 (m3,m4,m5)</td><td>4,5,6 + pad</td><td>16</td></tr>
+    <tr><td>第 2 列 (m6,m7,m8)</td><td>8,9,10 + pad</td><td>32</td></tr>
+  </table>
+  <pre><code><span class="tc">// 把 9 元素矩阵填进 12 元素数组（每列后留 1 个空位）</span>
+padded[<span class="tn">0</span>]=mat[<span class="tn">0</span>]; padded[<span class="tn">1</span>]=mat[<span class="tn">1</span>]; padded[<span class="tn">2</span>]=mat[<span class="tn">2</span>];
+padded[<span class="tn">4</span>]=mat[<span class="tn">3</span>]; padded[<span class="tn">5</span>]=mat[<span class="tn">4</span>]; padded[<span class="tn">6</span>]=mat[<span class="tn">5</span>];
+padded[<span class="tn">8</span>]=mat[<span class="tn">6</span>]; padded[<span class="tn">9</span>]=mat[<span class="tn">7</span>]; padded[<span class="tn">10</span>]=mat[<span class="tn">8</span>];</code></pre>
+  <div class="callout tip">
+    <p><span class="ic">💡</span>相比之下 <code>mat4x4f</code> 没有这个烦恼——它由 4 个 vec4 组成，本身就是 16 字节对齐，64 字节连续，可以直接 <code>writeBuffer</code>。所以从第 07 节起的 3D 部分我们一律用 mat4x4，省心很多。</p>
+  </div>
+
+  <h2>五、动手练习</h2>
+  <ol>
+    <li>交换 <code>translation</code> 与 <code>rotation</code> 两行的相乘顺序，观察差异。</li>
+    <li>添加一个「绕鼠标点旋转」的效果：先平移到鼠标位置、旋转、再平移回来。</li>
+    <li>把矩阵改成 <code>mat3x3</code> 直接存 36 字节（不对齐），观察渲染错乱——加深对对齐的理解。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../05-2d-scale/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../07-3d-orthographic/index.html">下一节：07 三维正射投影 →</a>
+  </div>
+</article>
+</body>
+</html>

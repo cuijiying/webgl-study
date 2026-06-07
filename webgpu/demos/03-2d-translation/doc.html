@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 03 二维平移</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../02-how-it-works/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>03 · 二维平移 —— Uniform 与 Bind Group 入门</h1>
+  <p class="subtitle">第一次使用 Uniform Buffer 把全局参数传给着色器，并理解 WebGPU 的「绑定组」机制。</p>
+
+  <h2>一、什么是 Uniform？</h2>
+  <p>顶点属性 (attribute) 是<strong>逐顶点不同</strong>的数据；而 <strong>Uniform 是对一次绘制中所有顶点都相同的全局常量</strong>，比如平移量、变换矩阵、颜色、时间等。在 WebGPU 里，uniform 数据存放在一个 <strong>Uniform Buffer</strong> 中，通过 <strong>Bind Group</strong> 绑定到管线。</p>
+
+  <h2>二、像素坐标 → 裁剪空间</h2>
+  <p>前两节顶点直接写裁剪空间坐标（-1~1），不直观。本节改用<strong>像素坐标</strong>定义几何（一个 "F"，宽 100、高 150），再在着色器里换算：</p>
+  <pre><code><span class="tk">let</span> moved = pos + u.translation;          <span class="tc">// ① 平移（像素）</span>
+<span class="tk">let</span> zeroToOne = moved / u.resolution;      <span class="tc">// ② 归一化到 0~1</span>
+<span class="tk">let</span> clip = zeroToOne * <span class="tn">2.0</span> - <span class="tn">1.0</span>;        <span class="tc">// ③ 映射到 -1~1</span>
+<span class="tk">return</span> <span class="tf">vec4f</span>(clip.x, -clip.y, <span class="tn">0.0</span>, <span class="tn">1.0</span>);  <span class="tc">// ④ 翻转 Y</span></code></pre>
+  <div class="callout note">
+    <p><span class="ic">🔄</span><strong>为什么翻转 Y？</strong>屏幕/图片的 Y 轴向下增大（原点左上），而裁剪空间 Y 轴向上增大（原点中心）。所以最后给 <code>clip.y</code> 取负，让 F 正立显示。</p>
+  </div>
+
+  <h2>三、WGSL 中声明 Uniform</h2>
+  <pre><code><span class="tk">struct</span> Uniforms {
+  resolution : vec2f,
+  translation : vec2f,
+};
+<span class="tk">@group</span>(0) <span class="tk">@binding</span>(0) <span class="tk">var</span>&lt;uniform&gt; u : Uniforms;</code></pre>
+  <ul>
+    <li><code>@group(0)</code>：属于第 0 号绑定组。</li>
+    <li><code>@binding(0)</code>：在该组内的第 0 号绑定点。</li>
+    <li><code>var&lt;uniform&gt;</code>：地址空间为 uniform（只读）。</li>
+  </ul>
+
+  <h2>四、JS 端：创建 Buffer 与 Bind Group</h2>
+  <pre><code><span class="tc">// uniform 缓冲：4 个 f32 = 16 字节</span>
+<span class="tk">const</span> uniformBuffer = device.<span class="tf">createBuffer</span>({
+  size: <span class="tn">16</span>,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+<span class="tk">const</span> bindGroup = device.<span class="tf">createBindGroup</span>({
+  layout: pipeline.<span class="tf">getBindGroupLayout</span>(<span class="tn">0</span>),  <span class="tc">// 取 group(0) 的布局</span>
+  entries: [{ binding: <span class="tn">0</span>, resource: { buffer: uniformBuffer } }],
+});</code></pre>
+  <div class="callout note">
+    <p><span class="ic">📦</span><strong>Bind Group 是什么？</strong>可以把它理解成「一捆资源的打包」——把若干 buffer / texture / sampler 按 binding 号绑在一起，绘制前用 <code>setBindGroup(0, bindGroup)</code> 一次性挂上去。这比 WebGL 一个个 <code>uniformXX</code> 设置高效得多。</p>
+  </div>
+
+  <h2>五、每帧更新与绘制</h2>
+  <pre><code>uniformData.<span class="tf">set</span>([canvas.width, canvas.height, tx, ty]);
+device.queue.<span class="tf">writeBuffer</span>(uniformBuffer, <span class="tn">0</span>, uniformData);
+<span class="tc">// ...</span>
+pass.<span class="tf">setBindGroup</span>(<span class="tn">0</span>, bindGroup);
+pass.<span class="tf">draw</span>(F.length / <span class="tn">2</span>);</code></pre>
+  <p>滑块改变后只需重写 uniform 缓冲并重绘，几何缓冲区无需改动。</p>
+
+  <h2>六、内存对齐速查（重要）</h2>
+  <p>WGSL 的 uniform 结构有严格的对齐规则，常成为新手的坑：</p>
+  <table>
+    <tr><th>类型</th><th>对齐(字节)</th><th>大小(字节)</th></tr>
+    <tr><td>f32 / i32 / u32</td><td>4</td><td>4</td></tr>
+    <tr><td>vec2f</td><td>8</td><td>8</td></tr>
+    <tr><td>vec3f</td><td>16</td><td>12 ⚠️</td></tr>
+    <tr><td>vec4f</td><td>16</td><td>16</td></tr>
+    <tr><td>mat4x4f</td><td>16</td><td>64</td></tr>
+  </table>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span><code>vec3f</code> 对齐是 16 但只占 12 字节，紧跟其后的字段会被「顶到」下一个 16 字节边界，极易算错偏移。本例两个 <code>vec2f</code> 各 8 字节正好凑成 16，无对齐陷阱。涉及 vec3 时建议改用 vec4 或重排字段。</p>
+  </div>
+
+  <h2>七、动手练习</h2>
+  <ol>
+    <li>再加一个 uniform <code>color: vec4f</code>，用滑块控制 F 的颜色（注意把结构补齐到 16 字节对齐）。</li>
+    <li>用鼠标拖动代替滑块（监听 <code>pointermove</code>，把鼠标坐标作为平移量）。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../02-how-it-works/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../04-2d-rotation/index.html">下一节：04 二维旋转 →</a>
+  </div>
+</article>
+</body>
+</html>

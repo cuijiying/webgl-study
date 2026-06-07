@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 03 - 二维平移</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>03 - 二维平移 (Uniform 入门)</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>平移 X</label>
+        <input type="range" id="tx" min="0" max="600" value="150">
+        <div class="value" id="txVal">150</div>
+      </div>
+      <div class="control-group">
+        <label>平移 Y</label>
+        <input type="range" id="ty" min="0" max="400" value="100">
+        <div class="value" id="tyVal">100</div>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">Uniform = 对所有顶点都相同的全局变量。本例把平移量放进 Uniform Buffer，通过 Bind Group 绑定给着色器。</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>这是 WebGPU 中第一次使用 <strong>Uniform Buffer + Bind Group</strong>。几何体（一个 "F" 字母）用像素坐标定义，着色器里把 <code>位置 + 平移量</code> 相加后再转换到裁剪空间。拖动滑块即可看到 F 在画布上移动。绑定流程详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script>
+'use strict';
+
+const shaderCode = /* wgsl */`
+  struct Uniforms {
+    resolution : vec2f,
+    translation : vec2f,
+  };
+  @group(0) @binding(0) var<uniform> u : Uniforms;
+
+  @vertex
+  fn vs(@location(0) pos : vec2f) -> @builtin(position) vec4f {
+    // 1. 加上平移量（仍是像素坐标）
+    let moved = pos + u.translation;
+    // 2. 像素坐标 → 0~1
+    let zeroToOne = moved / u.resolution;
+    // 3. 0~1 → -1~1（裁剪空间），并翻转 Y（屏幕Y向下，裁剪空间Y向上）
+    let clip = zeroToOne * 2.0 - 1.0;
+    return vec4f(clip.x, -clip.y, 0.0, 1.0);
+  }
+
+  @fragment
+  fn fs() -> @location(0) vec4f {
+    return vec4f(1.0, 0.43, 0.78, 1.0);
+  }
+`;
+
+// 一个 "F" 字母（像素坐标，原点在左上）
+const F = new Float32Array([
+  // 左竖
+  0,0,  30,0,  0,150,   0,150, 30,0, 30,150,
+  // 上横
+  30,0, 100,0, 30,30,   30,30, 100,0, 100,30,
+  // 中横
+  30,60, 67,60, 30,90,  30,90, 67,60, 67,90,
+]);
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  const vertexBuffer = device.createBuffer({
+    size: F.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(vertexBuffer, 0, F);
+
+  // Uniform buffer: resolution(vec2) + translation(vec2) = 4 个 f32 = 16 字节
+  const uniformBuffer = device.createBuffer({
+    size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: {
+      module, entryPoint: 'vs',
+      buffers: [{ arrayStride: 2 * 4, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }],
+    },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+
+  // Bind Group：把 uniformBuffer 绑定到 @group(0) @binding(0)
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+  });
+
+  const state = { tx: 150, ty: 100 };
+  const uniformData = new Float32Array(4);
+
+  function render() {
+    // 更新 uniform 数据
+    uniformData[0] = canvas.width;
+    uniformData[1] = canvas.height;
+    uniformData[2] = state.tx;
+    uniformData[3] = state.ty;
+    device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: context.getCurrentTexture().createView(),
+        clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 },
+        loadOp: 'clear', storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(F.length / 2);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  // 绑定滑块
+  function bindSlider(id, valId, key) {
+    const el = document.getElementById(id);
+    const valEl = document.getElementById(valId);
+    el.addEventListener('input', () => {
+      state[key] = +el.value;
+      valEl.textContent = el.value;
+      render();
+    });
+  }
+  bindSlider('tx', 'txVal', 'tx');
+  bindSlider('ty', 'tyVal', 'ty');
+  render();
+}
+main();
+</script>
+</body>
+</html>

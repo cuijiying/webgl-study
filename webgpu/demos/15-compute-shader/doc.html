@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 15 计算着色器</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../14-animation/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>15 · 计算着色器 —— GPU 通用并行计算</h1>
+  <p class="subtitle">用 Compute Shader 对图像做卷积，体会 WebGPU 相对 WebGL 的杀手级特性。</p>
+
+  <h2>一、什么是计算着色器？</h2>
+  <p>前面所有 demo 都走<strong>渲染管线</strong>：顶点着色器 → 光栅化 → 片元着色器，最终产出像素。但很多计算（图像处理、物理模拟、粒子系统、AI 推理）并不需要画三角形，只是想<strong>对大量数据做并行运算</strong>。</p>
+  <p>WebGL 做这类计算非常别扭（要把数据伪装成纹理、用片元着色器变相计算）。WebGPU 直接提供了独立的<strong>计算管线</strong>和 <code>@compute</code> 着色器，这就是通用 GPU 计算 (GPGPU)。这是 WebGPU 相对 WebGL <strong>最重要的新增能力</strong>。</p>
+
+  <h2>二、并行模型：线程、Workgroup、Dispatch</h2>
+  <p>计算着色器的执行单位是<strong>线程 (invocation)</strong>。线程被组织成三层：</p>
+  <table>
+    <tr><th>概念</th><th>说明</th></tr>
+    <tr><td>线程 (invocation)</td><td>最小执行单位，本例中一个线程处理一个像素</td></tr>
+    <tr><td>Workgroup</td><td>一组线程，由 <code>@workgroup_size(x,y,z)</code> 定义。本例 8×8=64 个线程</td></tr>
+    <tr><td>Dispatch</td><td><code>dispatchWorkgroups(gx,gy,gz)</code> 启动多少个 workgroup</td></tr>
+  </table>
+  <p>总线程数 = workgroup 数 × 每个 workgroup 的线程数。要覆盖 512×512 的图，每个 workgroup 8×8：</p>
+  <pre><code>cpass.<span class="tf">dispatchWorkgroups</span>(Math.<span class="tf">ceil</span>(512 / 8), Math.<span class="tf">ceil</span>(512 / 8)); <span class="tc">// 64 × 64 个 workgroup</span>
+<span class="tc">// 总线程 = 64×64 个 workgroup × (8×8) = 512×512，正好每像素一个线程</span></code></pre>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>由于 <code>ceil</code> 向上取整，边缘的线程可能超出图像范围。所以着色器开头必须<strong>越界检查</strong>：<code>if (gid.x &gt;= dims.x || gid.y &gt;= dims.y) { return; }</code></p>
+  </div>
+
+  <h2>三、global_invocation_id：我是哪个像素？</h2>
+  <p>每个线程通过内建变量 <code>@builtin(global_invocation_id)</code> 知道自己的全局编号，正好对应它要处理的像素坐标：</p>
+  <pre><code><span class="tk">@compute</span> <span class="tk">@workgroup_size</span>(8, 8)
+<span class="tk">fn</span> <span class="tf">main</span>(<span class="tk">@builtin</span>(global_invocation_id) gid : vec3u) {
+  <span class="tk">let</span> dims = <span class="tf">textureDimensions</span>(inputTex);
+  <span class="tk">if</span> (gid.x &gt;= dims.x || gid.y &gt;= dims.y) { <span class="tk">return</span>; }
+  <span class="tc">// gid.xy 就是当前像素坐标</span>
+}</code></pre>
+
+  <h2>四、读写纹理：textureLoad 与 textureStore</h2>
+  <p>计算着色器里读纹理不用 sampler，而是用 <code>textureLoad</code> 按整数坐标精确取像素；写入则用 <strong>storage texture</strong> + <code>textureStore</code>：</p>
+  <pre><code><span class="tk">@group</span>(0) <span class="tk">@binding</span>(0) <span class="tk">var</span> inputTex  : texture_2d&lt;f32&gt;;                          <span class="tc">// 只读</span>
+<span class="tk">@group</span>(0) <span class="tk">@binding</span>(1) <span class="tk">var</span> outputTex : texture_storage_2d&lt;rgba8unorm, write&gt;;     <span class="tc">// 可写</span>
+
+<span class="tk">let</span> texel = <span class="tf">textureLoad</span>(inputTex, coord, 0).rgb;        <span class="tc">// 读 (coord 是整数像素坐标, 0 是 mip 层)</span>
+<span class="tf">textureStore</span>(outputTex, vec2i(gid.xy), vec4f(color, 1.0)); <span class="tc">// 写</span></code></pre>
+  <p>对应 JS 端，输出纹理需要声明 <code>STORAGE_BINDING</code> 用途（之后还要被渲染采样，所以再加 <code>TEXTURE_BINDING</code>）：</p>
+  <pre><code><span class="tk">const</span> outputTex = device.<span class="tf">createTexture</span>({
+  size: [W, H], format: <span class="ts">'rgba8unorm'</span>,
+  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+});</code></pre>
+
+  <h2>五、卷积运算原理</h2>
+  <p>卷积是图像处理的核心操作：用一个 3×3 的<strong>卷积核 (kernel)</strong> 在图像上滑动，把每个像素及其 8 个邻居按核里的权重加权求和，得到新像素值。</p>
+  <p>设核为 $K$，结果像素 = $\text{factor} \times \sum_{i} (K_i \times \text{邻居}_i) + \text{bias}$。不同的核产生不同效果：</p>
+  <table>
+    <tr><th>效果</th><th>卷积核</th><th>说明</th></tr>
+    <tr><td>原图</td><td>中心 1，其余 0</td><td>不改变</td></tr>
+    <tr><td>均值模糊</td><td>全 1，×1/9</td><td>取邻域平均</td></tr>
+    <tr><td>高斯模糊</td><td>1 2 1 / 2 4 2 / 1 2 1，×1/16</td><td>加权平均，更自然</td></tr>
+    <tr><td>锐化</td><td>中心 5，上下左右 -1</td><td>增强对比</td></tr>
+    <tr><td>边缘检测</td><td>中心 8，周围 -1</td><td>突出轮廓</td></tr>
+    <tr><td>浮雕</td><td>方向梯度，+0.5 偏移</td><td>立体浮雕感</td></tr>
+  </table>
+  <pre><code><span class="tk">var</span> sum = vec3f(0.0);
+<span class="tk">var</span> idx = 0;
+<span class="tk">for</span> (<span class="tk">var</span> dy = -1; dy &lt;= 1; dy++) {
+  <span class="tk">for</span> (<span class="tk">var</span> dx = -1; dx &lt;= 1; dx++) {
+    <span class="tk">let</span> coord = <span class="tf">clamp</span>(vec2i(gid.xy) + vec2i(dx, dy), vec2i(0), vec2i(dims) - vec2i(1));
+    sum += <span class="tf">textureLoad</span>(inputTex, coord, 0).rgb * k[idx];
+    idx++;
+  }
+}
+<span class="tk">let</span> outColor = <span class="tf">clamp</span>(sum * factor + vec3f(bias), vec3f(0.0), vec3f(1.0));</code></pre>
+  <div class="callout note">
+    <p><span class="ic">📐</span>用 <code>clamp</code> 把邻居坐标限制在图像范围内，处理边缘像素时避免越界（相当于「边缘扩展」）。</p>
+  </div>
+
+  <h2>六、两个通道：先计算，再显示</h2>
+  <p>计算着色器把结果写进了 <code>outputTex</code>，但它是一张纹理、不是画布。要看到结果，还需要一个<strong>渲染通道</strong>把这张纹理画到屏幕（用全屏三角形采样它）。两个通道放在<strong>同一个命令编码器</strong>里，按顺序执行：</p>
+  <pre><code><span class="tk">const</span> encoder = device.<span class="tf">createCommandEncoder</span>();
+
+<span class="tc">// 通道 1：计算（跑卷积，写 outputTex）</span>
+<span class="tk">const</span> cpass = encoder.<span class="tf">beginComputePass</span>();
+cpass.<span class="tf">setPipeline</span>(computePipeline);
+cpass.<span class="tf">setBindGroup</span>(0, computeBindGroup);
+cpass.<span class="tf">dispatchWorkgroups</span>(Math.<span class="tf">ceil</span>(W / 8), Math.<span class="tf">ceil</span>(H / 8));
+cpass.<span class="tf">end</span>();
+
+<span class="tc">// 通道 2：渲染（采样 outputTex，画到画布）</span>
+<span class="tk">const</span> rpass = encoder.<span class="tf">beginRenderPass</span>(/* ... */);
+rpass.<span class="tf">setPipeline</span>(renderPipeline);
+rpass.<span class="tf">setBindGroup</span>(0, renderBindGroup);
+rpass.<span class="tf">draw</span>(3);   <span class="tc">// 全屏三角形</span>
+rpass.<span class="tf">end</span>();
+
+device.queue.<span class="tf">submit</span>([encoder.<span class="tf">finish</span>()]);  <span class="tc">// 一次提交，自动处理两通道间的依赖</span></code></pre>
+  <div class="callout tip">
+    <p><span class="ic">✨</span>WebGPU 会自动在两个通道之间插入<strong>资源同步屏障</strong>：保证计算通道写完 <code>outputTex</code>，渲染通道才开始读它。无需手动管理。</p>
+  </div>
+
+  <h2>七、计算着色器还能做什么？</h2>
+  <ul>
+    <li><strong>粒子系统</strong>：每个线程更新一个粒子的位置/速度，可达百万级。</li>
+    <li><strong>物理模拟</strong>：布料、流体、N-body 引力。</li>
+    <li><strong>图像 / 视频处理</strong>：滤镜、色彩校正、卷积神经网络。</li>
+    <li><strong>排序 / 归约</strong>：并行前缀和、并行排序。</li>
+    <li><strong>剔除 / LOD</strong>：在 GPU 上做视锥剔除，再间接绘制。</li>
+  </ul>
+
+  <h2>八、动手练习</h2>
+  <ol>
+    <li>加一个 5×5 的高斯核，对比 3×3 的模糊强度。</li>
+    <li>实现 Sobel 算子（水平 + 垂直梯度求模）做更好的边缘检测。</li>
+    <li>把 <code>@workgroup_size</code> 改成 16×16，观察是否更快（注意上限通常 256 线程）。</li>
+    <li>加载真实图片作为输入纹理，做实时滤镜。</li>
+    <li>挑战：用计算着色器实现一个简单的粒子系统。</li>
+  </ol>
+
+  <div class="callout note">
+    <p><span class="ic">🎓</span><strong>恭喜你完成了整套 WebGPU 教程！</strong>从第一个三角形到计算着色器，你已经掌握了 WebGPU 的核心：管线、缓冲、Bind Group、纹理、光照、动画和 GPU 通用计算。接下来可以尝试 <a href="https://webgpufundamentals.org" target="_blank" rel="noopener" style="color:#ff6ec7;">WebGPU Fundamentals</a> 深入更多主题，或动手做一个自己的项目。</p>
+  </div>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../14-animation/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../../index.html">🏠 返回 WebGPU 目录</a>
+  </div>
+</article>
+</body>
+</html>

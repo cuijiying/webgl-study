@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 14 动画</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../13-multiple-objects/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>14 · 动画 —— 渲染循环与时间管理</h1>
+  <p class="subtitle">用 requestAnimationFrame 驱动每帧绘制，用 deltaTime 让动画与帧率无关。</p>
+
+  <h2>一、动画的本质</h2>
+  <p>前面所有 demo 都是「改了参数才重画一次」。动画则是<strong>持续地、每一帧都重新绘制</strong>，每帧让物体的状态（位置、角度…）改变一点点，人眼看上去就连续运动了。</p>
+
+  <h2>二、requestAnimationFrame</h2>
+  <p>浏览器提供 <code>requestAnimationFrame(callback)</code>：它在<strong>下一次屏幕刷新前</strong>调用你的函数。相比 <code>setInterval</code>，它的优势是：</p>
+  <ul>
+    <li>与显示器刷新率同步，画面不撕裂；</li>
+    <li>标签页切到后台时自动暂停，省电；</li>
+    <li>回调会收到一个高精度时间戳（毫秒）。</li>
+  </ul>
+  <pre><code><span class="tk">function</span> <span class="tf">drawFrame</span>(now) {       <span class="tc">// now: 当前时间戳 (ms)</span>
+  <span class="tc">// ...更新状态、绘制...</span>
+  requestAnimationFrame(drawFrame); <span class="tc">// 申请下一帧，形成循环</span>
+}
+requestAnimationFrame(drawFrame);   <span class="tc">// 启动</span></code></pre>
+
+  <h2>三、关键：deltaTime（帧间隔）</h2>
+  <p>如果直接写 <code>angle += 0.02</code>，那么 144Hz 显示器上物体会转得比 60Hz 快一倍多——因为帧数更多。正确做法是按<strong>真实流逝的时间</strong>来推进：</p>
+  <pre><code><span class="tk">let</span> last = 0;
+<span class="tk">function</span> <span class="tf">drawFrame</span>(now) {
+  <span class="tk">if</span> (!last) last = now;
+  <span class="tk">const</span> dt = (now - last) / 1000;  <span class="tc">// 两帧间隔，换算成「秒」</span>
+  last = now;
+
+  angle += speed * dt;  <span class="tc">// speed 单位是「弧度/秒」，乘 dt 得到这帧应转的量</span>
+  <span class="tc">// ...</span>
+}</code></pre>
+  <div class="callout tip">
+    <p><span class="ic">⏱️</span><strong>核心思想</strong>：把速度定义为「每秒变化多少」，再乘以 <code>dt</code>。这样无论帧率高低，每秒的总变化量都相同——动画速度与设备无关。</p>
+  </div>
+
+  <h2>四、暂停 / 恢复的小陷阱</h2>
+  <p>暂停一段时间后恢复，<code>now - last</code> 会变得很大，导致物体「瞬移」。解决办法是恢复时把 <code>last</code> 清零，让下一帧重新校准：</p>
+  <pre><code>toggleBtn.<span class="tf">addEventListener</span>(<span class="ts">'click'</span>, () =&gt; {
+  running = !running;
+  last = 0;   <span class="tc">// ← 重置，避免 dt 突然变大造成跳变</span>
+});</code></pre>
+
+  <h2>五、每帧都要更新 GPU 数据</h2>
+  <p>动画里矩阵每帧都在变，所以每帧都要 <code>writeBuffer</code> 把新矩阵上传，再录制并提交命令。本例复用了第 13 节的<strong>动态偏移</strong>技术，一次性更新所有物体后逐个绘制：</p>
+  <pre><code>device.queue.<span class="tf">writeBuffer</span>(uniformBuffer, 0, big, 0, n * (256 / 4));
+<span class="tk">const</span> encoder = device.<span class="tf">createCommandEncoder</span>();
+<span class="tk">const</span> pass = encoder.<span class="tf">beginRenderPass</span>(/* ... */);
+<span class="tc">// ...逐物体 setBindGroup + draw...</span>
+pass.<span class="tf">end</span>();
+device.queue.<span class="tf">submit</span>([encoder.<span class="tf">finish</span>()]);</code></pre>
+  <div class="callout note">
+    <p><span class="ic">🔁</span>注意：<strong>每一帧都要重新录制命令</strong>。command encoder 用完即弃，不能跨帧复用。这正是 WebGPU「命令录制」模型与 WebGL「立即模式」的核心区别。</p>
+  </div>
+
+  <h2>六、FPS 统计</h2>
+  <p>累加 <code>dt</code> 和帧数，每隔 0.5 秒算一次平均帧率：</p>
+  <pre><code>fpsAcc += dt; fpsCount++;
+<span class="tk">if</span> (fpsAcc &gt;= 0.5) {
+  fps = Math.<span class="tf">round</span>(fpsCount / fpsAcc);
+  fpsAcc = 0; fpsCount = 0;
+}</code></pre>
+
+  <h2>七、动手练习</h2>
+  <ol>
+    <li>让每个物体的旋转轴不同（X / Y / Z 交替）。</li>
+    <li>加一个「整体绕中心公转」的运动（结合 sin/cos 改物体位置）。</li>
+    <li>用 <code>Math.sin(elapsed)</code> 做出物体上下浮动的缓动效果。</li>
+    <li>把速度滑块改成可正可负，实现反向旋转。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../13-multiple-objects/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../15-compute-shader/index.html">下一节：15 计算着色器 →</a>
+  </div>
+</article>
+</body>
+</html>

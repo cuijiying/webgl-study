@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 10 方向光源</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../09-3d-camera/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>10 · 方向光源 —— 法线与点积</h1>
+  <p class="subtitle">实现最基础的漫反射光照，理解法线、法线矩阵与点积的几何意义。</p>
+
+  <h2>一、什么是方向光？</h2>
+  <p>方向光（Directional Light）模拟<strong>无限远</strong>的光源，比如太阳。它的所有光线<strong>平行</strong>，只有方向、没有位置。一个表面有多亮，取决于它<strong>正对光源</strong>的程度。</p>
+
+  <h2>二、点积 = 朝向程度</h2>
+  <p>两个单位向量的点积等于它们夹角的余弦：</p>
+  <p>$$\vec{n}\cdot\vec{l} = \cos\theta$$</p>
+  <ul>
+    <li>法线与光照方向<strong>平行同向</strong>（正对光）→ 点积 = 1 → 最亮</li>
+    <li><strong>垂直</strong>（侧面对光）→ 点积 = 0 → 不亮</li>
+    <li><strong>背对</strong>光 → 点积为负 → 用 <code>max(..., 0)</code> 截断为 0（不会负亮度）</li>
+  </ul>
+  <pre><code><span class="tk">let</span> light = <span class="tf">max</span>(<span class="tf">dot</span>(n, <span class="tf">normalize</span>(u.lightDir)), <span class="tn">0.0</span>);
+<span class="tk">let</span> brightness = <span class="tn">0.2</span> + light * <span class="tn">0.8</span>; <span class="tc">// 0.2 是环境光</span></code></pre>
+  <div class="callout note">
+    <p><span class="ic">🌑</span><strong>环境光 (ambient)</strong>：纯漫反射会让背光面全黑，不真实。加一个小常量（这里 0.2）模拟环境中四处反射的微光，让暗面仍可见。</p>
+  </div>
+
+  <h2>三、法线从哪来？</h2>
+  <p>法线是垂直于表面的单位向量。<code>geometry.js</code> 里为 F 的每个面预设了法线（正面 (0,0,1)、顶面 (0,1,0) 等），作为第三个顶点属性传入：</p>
+  <pre><code>attributes: [
+  { shaderLocation: <span class="tn">0</span>, offset: <span class="tn">0</span>,  format: <span class="ts">'float32x3'</span> }, <span class="tc">// 位置</span>
+  { shaderLocation: <span class="tn">1</span>, offset: <span class="tn">12</span>, format: <span class="ts">'float32x3'</span> }, <span class="tc">// 颜色</span>
+  { shaderLocation: <span class="tn">2</span>, offset: <span class="tn">24</span>, format: <span class="ts">'float32x3'</span> }, <span class="tc">// 法线</span>
+]</code></pre>
+
+  <h2>四、法线矩阵：为什么不能直接用模型矩阵？</h2>
+  <div class="callout warn">
+    <p><span class="ic">⚠️</span>当物体旋转时法线也要跟着转。但<strong>不能直接用模型矩阵变换法线</strong>——如果模型含非均匀缩放，法线会被扭曲、不再垂直于表面。正确做法是使用<strong>模型矩阵左上 3×3 的逆转置矩阵</strong>（法线矩阵）。</p>
+  </div>
+  <pre><code><span class="tk">const</span> normalMatrix = mat4.<span class="tf">inverseTranspose</span>(model);
+<span class="tc">// 着色器里：</span>
+o.normal = (u.normalMatrix * <span class="tf">vec4f</span>(normal, <span class="tn">0.0</span>)).xyz;</code></pre>
+  <p>注意法线用 <code>vec4f(normal, 0.0)</code>——w=0 表示这是<strong>方向</strong>而非位置，不受平移影响。纯旋转时法线矩阵恰好等于旋转矩阵本身。</p>
+
+  <h2>五、Uniform 内存布局（160 字节）</h2>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>字节偏移</th><th>float 索引</th></tr>
+    <tr><td>mvp</td><td>mat4x4f</td><td>0</td><td>0–15</td></tr>
+    <tr><td>normalMatrix</td><td>mat4x4f</td><td>64</td><td>16–31</td></tr>
+    <tr><td>lightDir</td><td>vec3f</td><td>128</td><td>32–34</td></tr>
+    <tr><td>color</td><td>vec4f</td><td>144</td><td>36–39</td></tr>
+  </table>
+  <div class="callout tip">
+    <p><span class="ic">💡</span><code>lightDir</code> 是 vec3f，对齐到 16 字节，占 12 字节数据 + 4 字节填充（float 索引 35 空着），所以紧跟的 <code>color</code> 从索引 36 开始。这就是上一章反复强调的 vec3 对齐陷阱的实战体现。</p>
+  </div>
+
+  <h2>六、逐顶点 vs 逐片元光照</h2>
+  <p>本例在<strong>片元着色器</strong>里计算光照（Per-Fragment / Phong 着色），法线插值后逐像素算，效果平滑。若把计算放到顶点着色器（Per-Vertex / Gouraud），只在顶点算、然后插值亮度，性能更好但低多边形物体会显得「有棱角」。</p>
+
+  <h2>七、动手练习</h2>
+  <ol>
+    <li>把环境光改成 0，观察背光面全黑。</li>
+    <li>让光照方向随时间旋转，做出「日出日落」效果。</li>
+    <li>把光照计算移到顶点着色器，对比 Gouraud 与 Phong 的视觉差异。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../09-3d-camera/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../11-point-light/index.html">下一节：11 点光源 →</a>
+  </div>
+</article>
+</body>
+</html>

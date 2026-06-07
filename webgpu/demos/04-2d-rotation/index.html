@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 04 - 二维旋转</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>04 - 二维旋转</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>旋转角度</label>
+        <input type="range" id="angle" min="0" max="360" value="30">
+        <div class="value" id="angleVal">30°</div>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">旋转用 sin/cos 完成：<br>
+        x' = x·cos − y·sin<br>
+        y' = x·sin + y·cos</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>本节在 WGSL 里用三角函数实现二维旋转。我们把 <code>sin(角度)</code> 和 <code>cos(角度)</code> 作为 Uniform 传入，着色器据此旋转每个顶点。F 围绕其局部原点旋转。数学推导详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script>
+'use strict';
+
+const shaderCode = /* wgsl */`
+  struct Uniforms {
+    resolution : vec2f,
+    translation : vec2f,
+    rotation : vec2f,   // (sin, cos)
+  };
+  @group(0) @binding(0) var<uniform> u : Uniforms;
+
+  @vertex
+  fn vs(@location(0) pos : vec2f) -> @builtin(position) vec4f {
+    // 旋转：rotation = (sin, cos)
+    let rotated = vec2f(
+      pos.x * u.rotation.y - pos.y * u.rotation.x,  // x·cos − y·sin
+      pos.x * u.rotation.x + pos.y * u.rotation.y,  // x·sin + y·cos
+    );
+    let moved = rotated + u.translation;
+    let clip = moved / u.resolution * 2.0 - 1.0;
+    return vec4f(clip.x, -clip.y, 0.0, 1.0);
+  }
+
+  @fragment
+  fn fs() -> @location(0) vec4f {
+    return vec4f(1.0, 0.43, 0.78, 1.0);
+  }
+`;
+
+const F = new Float32Array([
+  0,0,  30,0,  0,150,   0,150, 30,0, 30,150,
+  30,0, 100,0, 30,30,   30,30, 100,0, 100,30,
+  30,60, 67,60, 30,90,  30,90, 67,60, 67,90,
+]);
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  const vertexBuffer = device.createBuffer({
+    size: F.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(vertexBuffer, 0, F);
+
+  // resolution + translation + rotation = 6 f32，按 16 对齐分配 32 字节
+  const uniformBuffer = device.createBuffer({
+    size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs',
+      buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+  });
+
+  const state = { angle: 30 };
+  const uniformData = new Float32Array(8);
+
+  function render() {
+    const rad = state.angle * Math.PI / 180;
+    uniformData[0] = canvas.width;
+    uniformData[1] = canvas.height;
+    uniformData[2] = 250;            // translation x（让 F 居中可见）
+    uniformData[3] = 150;            // translation y
+    uniformData[4] = Math.sin(rad);  // rotation.x = sin
+    uniformData[5] = Math.cos(rad);  // rotation.y = cos
+    device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: context.getCurrentTexture().createView(),
+        clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 },
+        loadOp: 'clear', storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(F.length / 2);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  const angleEl = document.getElementById('angle');
+  const angleVal = document.getElementById('angleVal');
+  angleEl.addEventListener('input', () => {
+    state.angle = +angleEl.value;
+    angleVal.textContent = angleEl.value + '°';
+    render();
+  });
+  render();
+}
+main();
+</script>
+</body>
+</html>

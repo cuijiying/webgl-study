@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 10 - 方向光源</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>10 - 方向光源</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>物体旋转</label><input type="range" id="ry" min="-180" max="180" value="-40"><div class="value" id="ryVal">-40°</div>
+      </div>
+      <div class="control-group">
+        <label>光照方向 X</label><input type="range" id="lx" min="-100" max="100" value="-40"><div class="value" id="lxVal">-0.40</div>
+      </div>
+      <div class="control-group">
+        <label>光照方向 Y</label><input type="range" id="ly" min="-100" max="100" value="50"><div class="value" id="lyVal">0.50</div>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">亮度 = max(dot(法线, 光照方向), 0)。法线与光线越接近平行，越亮。</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>方向光（如太阳光）所有光线平行。每个表面的亮度由<strong>法线</strong>与光照方向的<strong>点积</strong>决定。本节引入法线属性、法线矩阵，并在片元着色器里做漫反射计算。详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script src="../../js/geometry.js"></script>
+<script>
+'use strict';
+const mat4 = WebGPUUtils.mat4;
+
+const shaderCode = /* wgsl */`
+  struct Uniforms {
+    mvp : mat4x4f,
+    normalMatrix : mat4x4f,
+    lightDir : vec3f,
+    color : vec4f,
+  };
+  @group(0) @binding(0) var<uniform> u : Uniforms;
+
+  struct VSOut {
+    @builtin(position) position : vec4f,
+    @location(0) normal : vec3f,
+    @location(1) color : vec3f,
+  };
+
+  @vertex
+  fn vs(@location(0) pos : vec3f, @location(1) color : vec3f, @location(2) normal : vec3f) -> VSOut {
+    var o : VSOut;
+    o.position = u.mvp * vec4f(pos, 1.0);
+    // 用法线矩阵变换法线（只取 3x3 部分）
+    o.normal = (u.normalMatrix * vec4f(normal, 0.0)).xyz;
+    o.color = color;
+    return o;
+  }
+
+  @fragment
+  fn fs(in : VSOut) -> @location(0) vec4f {
+    let n = normalize(in.normal);
+    // 漫反射：法线与光照方向点积，负值截断为 0
+    let light = max(dot(n, normalize(u.lightDir)), 0.0);
+    // 加一点环境光，避免背光面全黑
+    let ambient = 0.2;
+    let brightness = ambient + light * 0.8;
+    return vec4f(in.color * brightness, 1.0);
+  }
+`;
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  const data = Geometry.interleaved();
+  const vertexBuffer = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(vertexBuffer, 0, data);
+
+  // mvp(64) + normalMatrix(64) + lightDir(vec3+pad=16) + color(16) = 160 字节
+  const uniformBuffer = device.createBuffer({ size: 160, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const depthTexture = device.createTexture({ size: [canvas.width, canvas.height], format: 'depth24plus', usage: GPUTextureUsage.RENDER_ATTACHMENT });
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs',
+      buffers: [{ arrayStride: 9 * 4, attributes: [
+        { shaderLocation: 0, offset: 0, format: 'float32x3' },
+        { shaderLocation: 1, offset: 12, format: 'float32x3' },
+        { shaderLocation: 2, offset: 24, format: 'float32x3' },
+      ]}] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+  });
+  const bindGroup = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: uniformBuffer } }] });
+
+  const state = { ry: -40, lx: -0.4, ly: 0.5 };
+  const uData = new Float32Array(40); // 160 字节
+
+  function render() {
+    const aspect = canvas.width / canvas.height;
+    const proj = mat4.perspective(55 * Math.PI / 180, aspect, 1, 2000);
+    const model = mat4.rotationY(state.ry * Math.PI / 180);
+    let mvp = mat4.multiply(proj, mat4.translation(0, 0, -320));
+    mvp = mat4.multiply(mvp, model);
+    const normalMatrix = mat4.inverseTranspose(model);
+
+    uData.set(mvp, 0);
+    uData.set(normalMatrix, 16);
+    uData[32] = state.lx; uData[33] = state.ly; uData[34] = 0.6; // lightDir
+    uData[36] = 1.0; uData[37] = 0.85; uData[38] = 0.5; uData[39] = 1.0; // color(暖色)
+    device.queue.writeBuffer(uniformBuffer, 0, uData);
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view: context.getCurrentTexture().createView(), clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 }, loadOp: 'clear', storeOp: 'store' }],
+      depthStencilAttachment: { view: depthTexture.createView(), depthClearValue: 1.0, depthLoadOp: 'clear', depthStoreOp: 'store' },
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(Geometry.vertexCount);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  function bind(id, valId, key, fmt) {
+    const el = document.getElementById(id), valEl = document.getElementById(valId);
+    el.addEventListener('input', () => { state[key] = key.startsWith('l') ? +el.value / 100 : +el.value; valEl.textContent = fmt(el.value); render(); });
+  }
+  bind('ry','ryVal','ry', v=>v+'°');
+  bind('lx','lxVal','lx', v=>(+v/100).toFixed(2));
+  bind('ly','lyVal','ly', v=>(+v/100).toFixed(2));
+  render();
+}
+main();
+</script>
+</body>
+</html>

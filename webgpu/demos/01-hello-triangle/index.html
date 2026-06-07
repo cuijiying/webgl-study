@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 01 - Hello Triangle</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>01 - Hello Triangle：第一个三角形</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>💡 核心步骤</h3>
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p>1. <code>requestAdapter()</code> 获取适配器</p>
+        <p>2. <code>requestDevice()</code> 获取设备</p>
+        <p>3. <code>context.configure()</code> 配置画布</p>
+        <p>4. <code>createShaderModule()</code> 编译 WGSL</p>
+        <p>5. <code>createRenderPipeline()</code> 创建管线</p>
+        <p>6. <code>createCommandEncoder()</code> 编码命令</p>
+        <p>7. <code>beginRenderPass()</code> 渲染通道</p>
+        <p>8. <code>queue.submit()</code> 提交执行</p>
+        <hr style="border-color:#2a2a4a; margin:12px 0;">
+        <p style="color:#ffab40;">WebGPU 渲染管线：<br>
+        JS 命令 → 命令缓冲 → GPU 队列 → 顶点着色器 → 光栅化 → 片元着色器 → 画布纹理</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>这是最基础的 WebGPU 程序。与 WebGL 即时（命令立即执行）不同，WebGPU 采用<strong>命令录制 + 批量提交</strong>的模式，更接近现代图形 API（Vulkan/Metal/D3D12）。本例顶点数据直接写在 WGSL 着色器里，不使用任何缓冲区，专注于理解最小启动流程。完整原理见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script>
+'use strict';
+
+// WGSL 着色器源码（顶点 + 片元写在同一个模块里）
+const shaderCode = /* wgsl */`
+  // 顶点着色器：返回裁剪空间坐标
+  @vertex
+  fn vs(@builtin(vertex_index) vertexIndex : u32) -> @builtin(position) vec4f {
+    // 在着色器里硬编码三角形三个顶点（裁剪空间 -1~1）
+    let pos = array<vec2f, 3>(
+      vec2f( 0.0,  0.5),  // 顶部
+      vec2f(-0.5, -0.5),  // 左下
+      vec2f( 0.5, -0.5),  // 右下
+    );
+    return vec4f(pos[vertexIndex], 0.0, 1.0);
+  }
+
+  // 片元着色器：返回颜色 (R, G, B, A)
+  @fragment
+  fn fs() -> @location(0) vec4f {
+    return vec4f(1.0, 0.43, 0.78, 1.0); // 粉色
+  }
+`;
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  // 编译着色器模块
+  const module = device.createShaderModule({ code: shaderCode });
+
+  // 创建渲染管线：描述顶点入口、片元入口、输出格式、图元类型
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+
+  function render() {
+    // 命令编码器：录制 GPU 指令
+    const encoder = device.createCommandEncoder();
+    // 渲染通道：clear 背景为深色，loadOp=clear 表示先清屏
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: context.getCurrentTexture().createView(),
+        clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 },
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.draw(3); // 绘制 3 个顶点（一个三角形）
+    pass.end();
+    // 提交命令缓冲到队列执行
+    device.queue.submit([encoder.finish()]);
+  }
+  render();
+}
+main();
+</script>
+</body>
+</html>

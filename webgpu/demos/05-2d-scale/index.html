@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU 05 - 二维缩放</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="demo-container">
+  <div class="demo-header">
+    <a href="../../index.html">← 返回 WebGPU 目录</a>
+    <h1>05 - 二维缩放</h1>
+    <div style="flex:1"></div>
+    <a class="doc-link-btn" href="doc.html">📖 查看详细文档</a>
+  </div>
+  <div class="demo-body">
+    <div class="canvas-wrap">
+      <canvas id="canvas" width="600" height="400"></canvas>
+    </div>
+    <div class="controls">
+      <h3>🎛️ 交互控制</h3>
+      <div class="control-group">
+        <label>缩放 X</label>
+        <input type="range" id="sx" min="-2" max="2" step="0.1" value="1">
+        <div class="value" id="sxVal">1.0</div>
+      </div>
+      <div class="control-group">
+        <label>缩放 Y</label>
+        <input type="range" id="sy" min="-2" max="2" step="0.1" value="1">
+        <div class="value" id="syVal">1.0</div>
+      </div>
+      <hr style="border-color:#2a2a4a; margin:12px 0;">
+      <div class="info-panel" style="margin:0; border:none; padding:0; background:none;">
+        <p style="color:#ffab40;">缩放 = 顶点坐标乘以缩放因子。负值会产生<strong>镜像翻转</strong>。</p>
+      </div>
+    </div>
+  </div>
+  <div class="info-panel">
+    <h3>📖 简介</h3>
+    <p>缩放是最简单的变换：把顶点坐标乘以缩放因子。X/Y 可独立缩放，负数会让图形镜像翻转。试试把缩放 X 调成 -1，F 会左右翻转。详见<a href="doc.html" style="color:#ff6ec7;">详细文档</a>。</p>
+  </div>
+</div>
+
+<script src="../../js/webgpu-utils.js"></script>
+<script>
+'use strict';
+
+const shaderCode = /* wgsl */`
+  struct Uniforms {
+    resolution : vec2f,
+    translation : vec2f,
+    scale : vec2f,
+  };
+  @group(0) @binding(0) var<uniform> u : Uniforms;
+
+  @vertex
+  fn vs(@location(0) pos : vec2f) -> @builtin(position) vec4f {
+    let scaled = pos * u.scale;          // 缩放
+    let moved = scaled + u.translation;  // 平移
+    let clip = moved / u.resolution * 2.0 - 1.0;
+    return vec4f(clip.x, -clip.y, 0.0, 1.0);
+  }
+
+  @fragment
+  fn fs() -> @location(0) vec4f {
+    return vec4f(1.0, 0.43, 0.78, 1.0);
+  }
+`;
+
+const F = new Float32Array([
+  0,0,  30,0,  0,150,   0,150, 30,0, 30,150,
+  30,0, 100,0, 30,30,   30,30, 100,0, 100,30,
+  30,60, 67,60, 30,90,  30,90, 67,60, 67,90,
+]);
+
+async function main() {
+  const canvas = document.getElementById('canvas');
+  let device, context, format;
+  try {
+    ({ device, context, format } = await WebGPUUtils.init(canvas));
+  } catch (e) {
+    WebGPUUtils.showError(document.querySelector('.canvas-wrap'), e.message);
+    return;
+  }
+
+  const vertexBuffer = device.createBuffer({
+    size: F.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(vertexBuffer, 0, F);
+
+  const uniformBuffer = device.createBuffer({
+    size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const module = device.createShaderModule({ code: shaderCode });
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vs',
+      buffers: [{ arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] }] },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: uniformBuffer } }],
+  });
+
+  const state = { sx: 1, sy: 1 };
+  const uniformData = new Float32Array(8);
+
+  function render() {
+    uniformData[0] = canvas.width;
+    uniformData[1] = canvas.height;
+    uniformData[2] = 250; // translation
+    uniformData[3] = 120;
+    uniformData[4] = state.sx;
+    uniformData[5] = state.sy;
+    device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+    const encoder = device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view: context.getCurrentTexture().createView(),
+        clearValue: { r: 0.04, g: 0.04, b: 0.1, a: 1.0 },
+        loadOp: 'clear', storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setVertexBuffer(0, vertexBuffer);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(F.length / 2);
+    pass.end();
+    device.queue.submit([encoder.finish()]);
+  }
+
+  function bindSlider(id, valId, key) {
+    const el = document.getElementById(id);
+    const valEl = document.getElementById(valId);
+    el.addEventListener('input', () => {
+      state[key] = +el.value;
+      valEl.textContent = (+el.value).toFixed(1);
+      render();
+    });
+  }
+  bindSlider('sx', 'sxVal', 'sx');
+  bindSlider('sy', 'syVal', 'sy');
+  render();
+}
+main();
+</script>
+</body>
+</html>

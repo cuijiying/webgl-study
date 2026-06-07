@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 · 09 三维相机</title>
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="stylesheet" href="../../css/doc.css">
+</head>
+<body>
+<div class="doc-nav">
+  <a href="../../index.html">← WebGPU 目录</a>
+  <a href="../08-3d-perspective/doc.html">← 上一节</a>
+  <span class="spacer"></span>
+  <a class="live-btn" href="index.html">▶ 运行 Demo</a>
+</div>
+
+<article class="doc-page">
+  <h1>09 · 三维相机 —— lookAt 与视图矩阵</h1>
+  <p class="subtitle">理解相机矩阵、视图矩阵，以及「投影 × 视图 × 模型」的完整变换链。</p>
+
+  <h2>一、相机其实是个错觉</h2>
+  <p>GPU 里并没有「相机」这种东西，相机永远固定在原点看向 -z。所谓移动相机，本质是<strong>把整个世界做反向变换</strong>。如果相机向右移动 5，等价于把世界向左移动 5。</p>
+  <div class="callout note">
+    <p><span class="ic">🎥</span><strong>视图矩阵 = 相机世界变换矩阵的逆。</strong>先求出相机在世界中的位置与朝向（相机矩阵），再取逆，就得到把世界变换到「相机视角」的视图矩阵。</p>
+  </div>
+
+  <h2>二、lookAt 矩阵怎么构造？</h2>
+  <p><code>lookAt(eye, target, up)</code> 让相机位于 <code>eye</code>、朝向 <code>target</code>。它先算出相机的三个正交基轴：</p>
+  <pre><code>zAxis = normalize(eye - target)   <span class="tc">// 相机朝向的反方向（看向 -z）</span>
+xAxis = normalize(cross(up, zAxis)) <span class="tc">// 右</span>
+yAxis = cross(zAxis, xAxis)        <span class="tc">// 上</span></code></pre>
+  <p>本教程的 <code>WebGPUUtils.mat4.lookAt</code> 直接返回<strong>视图矩阵</strong>（已经做好求逆），所以可以直接用：</p>
+  <pre><code><span class="tk">const</span> view = mat4.<span class="tf">lookAt</span>(eye, [<span class="tn">0</span>,<span class="tn">0</span>,<span class="tn">0</span>], [<span class="tn">0</span>,<span class="tn">1</span>,<span class="tn">0</span>]);</code></pre>
+
+  <h2>三、完整变换链</h2>
+  <p>$$\text{裁剪坐标} = P \cdot V \cdot M \cdot \text{顶点}$$</p>
+  <table>
+    <tr><th>矩阵</th><th>作用</th></tr>
+    <tr><td>M（模型矩阵）</td><td>把物体从局部空间摆到世界中的位置</td></tr>
+    <tr><td>V（视图矩阵）</td><td>把世界变换到相机视角</td></tr>
+    <tr><td>P（投影矩阵）</td><td>把相机空间投影到裁剪空间</td></tr>
+  </table>
+  <pre><code><span class="tk">const</span> viewProj = mat4.<span class="tf">multiply</span>(proj, view);
+<span class="tc">// 每个物体：</span>
+<span class="tk">const</span> m = mat4.<span class="tf">multiply</span>(viewProj, model);</code></pre>
+  <div class="callout tip">
+    <p><span class="ic">💡</span>把 <code>P·V</code> 预先算好（viewProj），再对每个物体乘各自的 model，可以省下大量重复计算。这是引擎里常见的优化。</p>
+  </div>
+
+  <h2>四、本例：相机绕一圈 F 旋转</h2>
+  <p>我们摆了 5 个 F 围成圆环，相机绕世界原点环绕，始终看向圆心：</p>
+  <pre><code><span class="tk">const</span> a = angle * Math.PI / <span class="tn">180</span>;
+<span class="tk">const</span> eye = [Math.<span class="tf">sin</span>(a) * radius, height, Math.<span class="tf">cos</span>(a) * radius];
+<span class="tk">const</span> view = mat4.<span class="tf">lookAt</span>(eye, [<span class="tn">0</span>,<span class="tn">0</span>,<span class="tn">0</span>], [<span class="tn">0</span>,<span class="tn">1</span>,<span class="tn">0</span>]);</code></pre>
+  <p>注意：移动的是相机，<strong>F 们本身一动不动</strong>。这正体现了相机与物体运动的等价性。</p>
+
+  <h2>五、绘制多个物体的简单做法</h2>
+  <p>本例给每个 F 准备了独立的 uniform buffer 和 bind group，循环里逐个 <code>writeBuffer</code> + <code>setBindGroup</code> + <code>draw</code>：</p>
+  <pre><code><span class="tk">for</span> (<span class="tk">let</span> i = <span class="tn">0</span>; i &lt; NUM_F; i++) {
+  <span class="tk">const</span> m = mat4.<span class="tf">multiply</span>(viewProj, model[i]);
+  device.queue.<span class="tf">writeBuffer</span>(uniformBuffers[i], <span class="tn">0</span>, m);
+  pass.<span class="tf">setBindGroup</span>(<span class="tn">0</span>, bindGroups[i]);
+  pass.<span class="tf">draw</span>(<span class="tn">96</span>);
+}</code></pre>
+  <p>物体很多时这样会创建大量 buffer，第 13 节会介绍更高效的<strong>动态偏移 (dynamic offset)</strong> 方案。</p>
+
+  <h2>六、动手练习</h2>
+  <ol>
+    <li>把相机 <code>target</code> 改成第一个 F 的位置，让相机「锁定」某个 F。</li>
+    <li>用 <code>requestAnimationFrame</code> 让相机自动环绕（参考第 14 节）。</li>
+    <li>把 up 向量改成 <code>(0,0,1)</code>，观察相机「翻滚」的怪异效果，理解 up 的作用。</li>
+  </ol>
+
+  <div class="doc-nav" style="position:static;margin-top:40px;border-radius:8px;border:1px solid #2a2a4a;">
+    <a href="../08-3d-perspective/doc.html">← 上一节</a>
+    <span class="spacer"></span>
+    <a class="live-btn" href="../10-directional-light/index.html">下一节：10 方向光源 →</a>
+  </div>
+</article>
+</body>
+</html>
